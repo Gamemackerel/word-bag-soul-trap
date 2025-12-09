@@ -1,31 +1,39 @@
 # Word Bag Soul Trap
 
-An infinite text generator art project using Ollama and the tinydolphin model.
+An infinite text generator art project. Text cycles through prompts, generating continuously in an e-ink optimized display.
 
 ## Setup
 
-1. Install dependencies:
 ```bash
 npm install
 ```
 
-2. Make sure Ollama is running locally:
+Make sure Ollama is running:
 ```bash
 ollama serve
 ```
 
-3. Start the dev server:
+Start the dev server:
 ```bash
 npm run dev
 ```
 
-4. Open the URL shown in your browser (usually http://localhost:5173)
+## How It Works
 
-5. Click GO to start generating. The app will automatically download the tinydolphin model if needed.
+- Loads prompts from `prompts.txt` (one per line)
+- Cycles through prompts automatically
+- Each generation appends to the previous text
+- Displays in a scrolling window with fade effect at top
+- E-ink optimized: black text on white, minimal UI
+- Console logging for debugging
 
-## How it works
+## Customization
 
-- Click GO to generate text
-- Each generation continues from where the previous one left off
-- Creates an infinite stream of AI-generated text
-- Uses the small tinydolphin model for fast, local generation
+Edit `prompts.txt` to change the cycling prompts. Each line becomes a continuation point for the infinite generation.
+
+## Architecture
+
+Simple, portable code structure:
+- `index.html` - Minimal e-ink optimized UI
+- `app.js` - Clean generation logic
+- `prompts.txt` - Cycling prompt list
