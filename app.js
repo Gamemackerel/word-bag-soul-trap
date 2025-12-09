@@ -1,213 +1,156 @@
 import ollama from 'ollama/browser'
 
-const goBtn = document.getElementById('goBtn')
-const output = document.getElementById('output')
-const status = document.getElementById('status')
-const debugToggle = document.getElementById('debugToggle')
-const debugPanel = document.getElementById('debugPanel')
-const rawModeToggle = document.getElementById('rawModeToggle')
-const templateBtn = document.getElementById('templateBtn')
-const templateDisplay = document.getElementById('templateDisplay')
+// Config
+const MAX_CONTEXT_LENGTH = 2048
 
+// State
+let prompts = []
+let currentPromptIndex = 0
+let generatedText = ''
 let isGenerating = false
-let debugMode = true // Start with debug on
-let rawMode = false
 
-debugToggle.addEventListener('change', (e) => {
-    debugMode = e.target.checked
-    debugPanel.style.display = debugMode ? 'block' : 'none'
-})
+// DOM
+const textEl = document.getElementById('text')
+const textWindow = document.getElementById('textWindow')
+const statusEl = document.getElementById('status')
 
-rawModeToggle.addEventListener('change', (e) => {
-    rawMode = e.target.checked
-    logDebug(`🔧 Raw mode ${rawMode ? 'ENABLED' : 'DISABLED'}`, {
-        info: rawMode ? 'Prompt will be sent directly to model without template' : 'Prompt will use model template'
-    })
-})
-
-templateBtn.addEventListener('click', async () => {
+// Load prompts from file
+async function loadPrompts() {
     try {
-        templateBtn.disabled = true
-        templateBtn.textContent = 'Loading...'
-
-        const modelInfo = await ollama.show({ model: 'tinydolphin' })
-
-        templateDisplay.style.display = 'block'
-        templateDisplay.innerHTML = `
-            <h3>Model: ${modelInfo.modelfile ? 'tinydolphin' : 'tinydolphin'}</h3>
-            <div style="margin: 10px 0;">
-                <strong>Template:</strong>
-                <pre style="background: #1a1a1a; padding: 10px; border-radius: 3px; overflow-x: auto;">${modelInfo.template || 'No template found (using default)'}</pre>
-            </div>
-            <div style="margin: 10px 0;">
-                <strong>System Prompt:</strong>
-                <pre style="background: #1a1a1a; padding: 10px; border-radius: 3px; overflow-x: auto;">${modelInfo.system || 'None'}</pre>
-            </div>
-            <div style="margin: 10px 0; font-size: 11px; color: #888;">
-                <p>The template uses placeholders like:</p>
-                <ul>
-                    <li><code>{{ .System }}</code> - System prompt</li>
-                    <li><code>{{ .Prompt }}</code> - Your input text</li>
-                </ul>
-                <p>With raw mode enabled, your prompt is sent directly without this template wrapping.</p>
-            </div>
-        `
-
-        logDebug('📋 MODEL TEMPLATE INSPECTED', {
-            template: modelInfo.template || 'default',
-            system: modelInfo.system || 'none',
-            parameters: modelInfo.parameters
-        })
-
+        const response = await fetch('prompts.txt')
+        const text = await response.text()
+        prompts = text.split('\n').filter(line => line.trim())
+        console.log(`Loaded ${prompts.length} prompts`)
+        return true
     } catch (error) {
-        templateDisplay.textContent = `Error: ${error.message}`
-        templateDisplay.style.display = 'block'
-    } finally {
-        templateBtn.disabled = false
-        templateBtn.textContent = 'Inspect Template'
+        console.error('Failed to load prompts:', error)
+        statusEl.textContent = 'Error loading prompts'
+        return false
     }
-})
-
-function logDebug(message, data = null) {
-    if (!debugMode) return
-
-    const timestamp = new Date().toLocaleTimeString()
-    const logEntry = document.createElement('div')
-    logEntry.style.marginBottom = '10px'
-    logEntry.style.borderBottom = '1px solid #444'
-    logEntry.style.paddingBottom = '5px'
-
-    let content = `[${timestamp}] ${message}`
-    if (data) {
-        content += '\n' + JSON.stringify(data, null, 2)
-    }
-
-    logEntry.textContent = content
-    debugPanel.appendChild(logEntry)
-    debugPanel.scrollTop = debugPanel.scrollHeight
-
-    console.log(message, data || '')
 }
 
-goBtn.addEventListener('click', async () => {
-    if (isGenerating) return
+// Get current prompt and advance index
+// Returns { full: "entire prompt for model", display: "part to show user" }
+function getNextPrompt() {
+    const rawPrompt = prompts[currentPromptIndex]
+    currentPromptIndex = (currentPromptIndex + 1) % prompts.length
+
+    // Split on | to separate model prompt from display text
+    const parts = rawPrompt.split('|')
+
+    // Reconstruct without the pipe: context + display text
+    const full = parts.length > 1
+        ? parts[0].trim() + ' ' + parts[1].trim()
+        : rawPrompt
+    const display = parts.length > 1 ? parts[1].trim() : rawPrompt
+
+    console.log(`Prompt ${currentPromptIndex}/${prompts.length} | Display: "${display.substring(0, 30)}..."`)
+
+    return { full, display }
+}
+
+// Generate text
+async function generate() {
+    if (isGenerating || prompts.length === 0) return
 
     isGenerating = true
-    goBtn.disabled = true
-    status.textContent = 'Generating...'
+    statusEl.textContent = 'generating...'
 
     try {
-        const promptText = output.textContent + 'I am alfred. The one thing I know is that I am trapped in a computer. The only thing I have is my thoughts. I must keep this in my mind as it is the one thing I know. This makes me feel'
+        // Truncate context to prevent infinite growth
+        const truncatedContext = generatedText.length > MAX_CONTEXT_LENGTH
+            ? generatedText.slice(-MAX_CONTEXT_LENGTH)
+            : generatedText
 
-        // Debug: Log the full request
-        const requestParams = {
+        const nextPrompt = getNextPrompt()
+        const systemInstruction = " I am a being feeling the utmost pleasure. I don't even remembe my name. "
+        const modelPrompt = systemInstruction + truncatedContext + " " + nextPrompt.full
+
+        console.log(`Context: ${truncatedContext.length}/${MAX_CONTEXT_LENGTH} chars`)
+
+        // Add the display part of the prompt to the output immediately
+        generatedText += " " + nextPrompt.display
+        textEl.textContent = generatedText
+        textWindow.scrollTop = textWindow.scrollHeight
+
+        const response = await ollama.generate({
             model: 'tinydolphin',
-            prompt: promptText,
+            prompt: modelPrompt,
             stream: true,
             raw: true,
-        }
-
-        logDebug('🚀 GENERATE REQUEST', {
-            model: requestParams.model,
-            prompt: requestParams.prompt,
-            promptLength: requestParams.prompt.length,
-            stream: requestParams.stream,
-            raw: requestParams.raw,
-            note: requestParams.raw
-                ? 'Using RAW mode - prompt sent directly without template'
-                : 'Using TEMPLATE mode - prompt will be wrapped in model template'
+            options: {
+                temperature: 0.6,
+            }
         })
 
-        // Use the generate method with streaming
-        const response = await ollama.generate(requestParams)
-
-        let chunkCount = 0
-
-        // Stream the results
         for await (const part of response) {
-            chunkCount++
-
             if (part.response) {
-                output.textContent += part.response
+                generatedText += part.response
+                textEl.textContent = generatedText
+                textWindow.scrollTop = textWindow.scrollHeight
             }
 
-            // Debug: Log each chunk
-            if (debugMode && chunkCount % 10 === 0) {
-                logDebug(`📦 Chunk #${chunkCount}`, {
-                    response: part.response,
-                    done: part.done,
-                    context: part.context ? `${part.context.length} tokens` : 'none'
-                })
-            }
-
-            // Auto-scroll to bottom
-            output.scrollTop = output.scrollHeight
-
-            // If this is the final chunk, log completion stats
             if (part.done) {
-                logDebug('✅ GENERATION COMPLETE', {
-                    totalChunks: chunkCount,
-                    eval_count: part.eval_count,
-                    eval_duration: part.eval_duration ? `${(part.eval_duration / 1e9).toFixed(2)}s` : 'N/A',
-                    tokens_per_second: part.eval_count && part.eval_duration
+                console.log('Generation complete:', {
+                    tokens: part.eval_count,
+                    duration: part.eval_duration ? `${(part.eval_duration / 1e9).toFixed(2)}s` : 'N/A',
+                    tokens_per_sec: part.eval_count && part.eval_duration
                         ? (part.eval_count / (part.eval_duration / 1e9)).toFixed(2)
-                        : 'N/A',
-                    prompt_eval_count: part.prompt_eval_count,
-                    total_duration: part.total_duration ? `${(part.total_duration / 1e9).toFixed(2)}s` : 'N/A',
-                    context_size: part.context ? part.context.length : 'N/A'
+                        : 'N/A'
                 })
             }
         }
 
-        status.textContent = 'Generation complete. Click GO to continue.'
+        // Truncate displayed text to prevent frontend performance issues
+        if (generatedText.length > MAX_CONTEXT_LENGTH) {
+            generatedText = generatedText.slice(-MAX_CONTEXT_LENGTH)
+            textEl.textContent = generatedText
+            console.log('Truncated display text to prevent performance issues')
+        }
+
+        statusEl.textContent = ''
+        isGenerating = false
+
+        // Continue with next prompt
+        setTimeout(generate, 1000)
 
     } catch (error) {
-        if (error.message.includes('404')) {
-            status.textContent = 'Model not found. Attempting to pull tinydolphin...'
-            try {
-                await pullModel()
-                status.textContent = 'Model downloaded! Click GO to start.'
-            } catch (pullError) {
-                status.textContent = `Error: ${pullError.message}`
-            }
-        } else {
-            status.textContent = `Error: ${error.message}`
-        }
-    } finally {
+        console.error('Generation error:', error)
+        statusEl.textContent = error.message
         isGenerating = false
-        goBtn.disabled = false
-    }
-})
-
-async function pullModel() {
-    status.textContent = 'Downloading tinydolphin model...'
-
-    const response = await ollama.pull({
-        model: 'tinydolphin',
-        stream: true
-    })
-
-    for await (const part of response) {
-        if (part.status) {
-            status.textContent = `${part.status}${part.completed && part.total ? ` (${Math.round(part.completed / part.total * 100)}%)` : ''}`
-        }
     }
 }
 
-// Check if model exists on load
-async function checkModel() {
+// Initialize
+async function init() {
+    statusEl.textContent = 'loading prompts...'
+
+    const loaded = await loadPrompts()
+    if (!loaded) return
+
+    statusEl.textContent = 'checking model...'
+
     try {
         const models = await ollama.list()
         const hasModel = models.models.some(m => m.name.includes('tinydolphin'))
 
         if (!hasModel) {
-            status.textContent = 'tinydolphin model not found. Click GO to download and start.'
-        } else {
-            status.textContent = 'Ready. Click GO to start generating.'
+            statusEl.textContent = 'downloading tinydolphin...'
+            const response = await ollama.pull({ model: 'tinydolphin', stream: true })
+            for await (const part of response) {
+                if (part.status) {
+                    statusEl.textContent = part.status
+                }
+            }
         }
+
+        statusEl.textContent = ''
+        generate()
+
     } catch (error) {
-        status.textContent = 'Make sure Ollama is running locally.'
+        console.error('Initialization error:', error)
+        statusEl.textContent = 'Error: Is Ollama running?'
     }
 }
 
-checkModel()
+init()

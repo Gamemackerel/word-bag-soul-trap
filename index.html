@@ -3,141 +3,78 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinite Text Generator</title>
+    <title>Word Bag Soul Trap</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: monospace;
-            max-width: 800px;
-            margin: 50px auto;
-            padding: 20px;
-            background: #1a1a1a;
-            color: #f0f0f0;
+            font-family: 'Courier New', monospace;
+            background: white;
+            color: black;
+            overflow: hidden;
+            height: 100vh;
         }
 
-        #output {
-            white-space: pre-wrap;
-            line-height: 1.6;
-            margin-top: 20px;
-            padding: 20px;
-            background: #2a2a2a;
-            border-radius: 5px;
-            min-height: 200px;
+        #container {
+            position: relative;
+            height: 100vh;
+            overflow: hidden;
         }
 
-        button {
-            padding: 15px 30px;
-            font-size: 18px;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-family: monospace;
+        #textWindow {
+            height: 100vh;
+            overflow-y: scroll;
+            padding: 2rem;
+            line-height: 1.8;
+            font-size: 16px;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
         }
 
-        button:hover {
-            background: #45a049;
-        }
-
-        button:disabled {
-            background: #666;
-            cursor: not-allowed;
-        }
-
-        #status {
-            margin-top: 10px;
-            font-size: 14px;
-            color: #888;
-        }
-
-        .controls {
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .debug-control {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        #debugPanel {
-            background: #0a0a0a;
-            border: 1px solid #444;
-            border-radius: 5px;
-            padding: 15px;
-            margin-top: 20px;
-            max-height: 400px;
-            overflow-y: auto;
-            font-size: 12px;
-            white-space: pre-wrap;
-        }
-
-        #debugPanel div {
-            color: #0f0;
-        }
-
-        #templateDisplay {
-            background: #2a2a2a;
-            border: 1px solid #555;
-            border-radius: 5px;
-            padding: 15px;
-            margin-top: 20px;
+        #textWindow::-webkit-scrollbar {
             display: none;
         }
 
-        #templateDisplay h3 {
-            margin-top: 0;
-            color: #4CAF50;
+        #fade {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 200px;
+            background: linear-gradient(to bottom,
+                white 0%,
+                rgba(255, 255, 255, 0.9) 20%,
+                rgba(255, 255, 255, 0.5) 50%,
+                transparent 100%
+            );
+            pointer-events: none;
         }
 
-        #templateDisplay pre {
-            overflow-x: auto;
+        .text-content {
+            color: #666;
         }
 
-        .secondary-btn {
-            padding: 10px 20px;
-            font-size: 14px;
-            background: #555;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-family: monospace;
-        }
-
-        .secondary-btn:hover {
-            background: #666;
-        }
-
-        .secondary-btn:disabled {
-            background: #444;
-            cursor: wait;
+        #status {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            font-size: 12px;
+            color: #ccc;
         }
     </style>
 </head>
 <body>
-    <h1>Infinite Text Generator</h1>
-
-    <div class="controls">
-        <button id="goBtn">GO</button>
-        <label class="debug-control">
-            <input type="checkbox" id="debugToggle" checked>
-            Debug Mode
-        </label>
-        <label class="debug-control">
-            <input type="checkbox" id="rawModeToggle">
-            Raw Mode
-        </label>
-        <button id="templateBtn" class="secondary-btn">Inspect Template</button>
+    <div id="container">
+        <div id="textWindow">
+            <div class="text-content" id="text"></div>
+        </div>
+        <div id="fade"></div>
+        <div id="status"></div>
     </div>
-
-    <div id="status"></div>
-    <div id="templateDisplay"></div>
-    <div id="output"></div>
-    <div id="debugPanel"></div>
 
     <script type="module" src="app.js"></script>
 </body>
