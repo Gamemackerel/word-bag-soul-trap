@@ -1,0 +1,16 @@
+{
+  "name": "word-bag-soul-trap",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "ollama": "^0.5.11"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinite Text Generator</title>
+    <style>
+        body {
+            font-family: monospace;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #f0f0f0;
+        }
+
+        #output {
+            white-space: pre-wrap;
+            line-height: 1.6;
+            margin-top: 20px;
+            padding: 20px;
+            background: #2a2a2a;
+            border-radius: 5px;
+            min-height: 200px;
+        }
+
+        button {
+            padding: 15px 30px;
+            font-size: 18px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: monospace;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 10px;
+            font-size: 14px;
+            color: #888;
+        }
+
+        .controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .debug-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #debugPanel {
+            background: #0a0a0a;
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+
+        #debugPanel div {
+            color: #0f0;
+        }
+
+        #templateDisplay {
+            background: #2a2a2a;
+            border: 1px solid #555;
+            border-radius: 5px;
+            padding: 15px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        #templateDisplay h3 {
+            margin-top: 0;
+            color: #4CAF50;
+        }
+
+        #templateDisplay pre {
+            overflow-x: auto;
+        }
+
+        .secondary-btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            background: #555;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-family: monospace;
+        }
+
+        .secondary-btn:hover {
+            background: #666;
+        }
+
+        .secondary-btn:disabled {
+            background: #444;
+            cursor: wait;
+        }
+    </style>
+</head>
+<body>
+    <h1>Infinite Text Generator</h1>
+
+    <div class="controls">
+        <button id="goBtn">GO</button>
+        <label class="debug-control">
+            <input type="checkbox" id="debugToggle" checked>
+            Debug Mode
+        </label>
+        <label class="debug-control">
+            <input type="checkbox" id="rawModeToggle">
+            Raw Mode
+        </label>
+        <button id="templateBtn" class="secondary-btn">Inspect Template</button>
+    </div>
+
+    <div id="status"></div>
+    <div id="templateDisplay"></div>
+    <div id="output"></div>
+    <div id="debugPanel"></div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
