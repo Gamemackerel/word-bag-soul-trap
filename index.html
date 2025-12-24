@@ -14,48 +14,7 @@
         body {
             font-family: 'Courier New', monospace;
             background: white;
-            color: black;
             overflow: hidden;
-            height: 100vh;
-        }
-
-        #container {
-            position: relative;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        #textWindow {
-            height: 100vh;
-            overflow-y: scroll;
-            padding: 2rem;
-            line-height: 1.8;
-            font-size: 16px;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
-        }
-
-        #textWindow::-webkit-scrollbar {
-            display: none;
-        }
-
-        #fade {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 200px;
-            background: linear-gradient(to bottom,
-                white 0%,
-                rgba(255, 255, 255, 0.9) 20%,
-                rgba(255, 255, 255, 0.5) 50%,
-                transparent 100%
-            );
-            pointer-events: none;
-        }
-
-        .text-content {
-            color: #666;
         }
 
         #status {
@@ -64,18 +23,23 @@
             right: 1rem;
             font-size: 12px;
             color: #ccc;
+            z-index: 1000;
+            background: white;
+            padding: 0.5rem;
+        }
+
+        main {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
     </style>
 </head>
 <body>
-    <div id="container">
-        <div id="textWindow">
-            <div class="text-content" id="text"></div>
-        </div>
-        <div id="fade"></div>
-        <div id="status"></div>
-    </div>
-
+    <main></main>
+    <div id="status"></div>
     <script type="module" src="app.js"></script>
 </body>
 </html>
