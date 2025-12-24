@@ -8,7 +8,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "ollama": "^0.5.11"
+    "ollama": "^0.5.11",
+    "p5": "^2.1.2"
   },
   "devDependencies": {
     "vite": "^5.0.0"

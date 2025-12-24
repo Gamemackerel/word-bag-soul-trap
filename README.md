@@ -23,8 +23,10 @@ npm run dev
 - Loads prompts from `prompts.txt` (one per line)
 - Cycles through prompts automatically
 - Each generation appends to the previous text
-- Displays in a scrolling window with fade effect at top
-- E-ink optimized: black text on white, minimal UI
+- **NEW:** Words flow and fade using p5.js visualization
+- Words cascade downward with varying speeds
+- Recent words are larger and more visible, older words fade out
+- Clean black text on white background
 - Console logging for debugging
 
 ## Customization
@@ -34,6 +36,16 @@ Edit `prompts.txt` to change the cycling prompts. Each line becomes a continuati
 ## Architecture
 
 Simple, portable code structure:
-- `index.html` - Minimal e-ink optimized UI
-- `app.js` - Clean generation logic
+- `index.html` - Minimal container for p5.js canvas
+- `app.js` - p5.js visualization + Ollama generation logic
 - `prompts.txt` - Cycling prompt list
+
+## p5.js Features
+
+Now that the engine uses p5.js, you can extend it with:
+- Custom word animations and particle effects
+- Color gradients and visual themes
+- Interactive controls (mouse/keyboard)
+- Generative art patterns with the text
+- Sound reactivity
+- Export frames or recordings
