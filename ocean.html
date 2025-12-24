@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ocean of Letters</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #001122;
+            overflow: hidden;
+        }
+
+        main {
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #controls {
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 1rem;
+            border-radius: 4px;
+            z-index: 1000;
+        }
+
+        #controls button {
+            margin: 0.5rem;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+        }
+
+        #controls input {
+            margin: 0.5rem;
+            padding: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <main id="canvas-container"></main>
+    <div id="controls">
+        <input type="text" id="wordInput" placeholder="Enter word..." />
+        <button onclick="formWord()">Form Word</button>
+        <button onclick="addLetters()">Add 50 Letters</button>
+    </div>
+
+    <script type="module" src="ocean.js"></script>
+</body>
+</html>
