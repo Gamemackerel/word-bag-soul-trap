@@ -14,8 +14,17 @@ let words = [] // Array of word objects for p5 visualization
 // Word queue system
 let wordQueue = [] // Queue of words waiting to be displayed
 let generationQueue = 0 // Number of generations in progress or queued
-const MAX_GENERATION_LOOKAHEAD = 2 // Maximum generations to queue ahead
-const WORDS_PER_SECOND = 1 // Display rate
+const MAX_BUFFER_SIZE = 500 // Maximum words to buffer before pausing generation
+
+// Display timing (in milliseconds)
+const WORD_DELAY_START = 350  // Starting delay for words (resets after punctuation)
+const WORD_DELAY_MIN = 150    // Minimum word delay (fastest speed)
+const WORD_ACCELERATION = 0.85 // Multiply delay by this each word (faster acceleration)
+const COMMA_DELAY = 500       // 0.5 seconds after comma, semicolon, colon
+const PERIOD_DELAY = 1500     // 1.5 seconds after a period
+const PARAGRAPH_DELAY = 3000  // 3 seconds for new paragraph
+
+let currentWordDelay = WORD_DELAY_START // Track current word delay
 
 // DOM
 const statusEl = document.getElementById('status')
@@ -164,15 +173,51 @@ function addTextToDisplay(text) {
     console.log(`  📥 Added ${newWords.length} words to queue (queue size: ${wordQueue.length})`)
 }
 
-// Display words from queue at controlled rate
+// Display words from queue with variable timing
 function startWordDisplay() {
-    setInterval(() => {
+    function displayNextWord() {
         if (wordQueue.length > 0) {
             const word = wordQueue.shift()
             p5Instance.addWord(word)
             console.log(`  📤 Displaying queued word: "${word}" (${wordQueue.length} remaining)`)
+
+            // Determine delay based on word content
+            let delay = currentWordDelay
+
+            // Check if word ends with period (sentence end)
+            if (word.endsWith('.') || word.endsWith('!') || word.endsWith('?')) {
+                delay = PERIOD_DELAY
+                currentWordDelay = WORD_DELAY_START // Reset acceleration
+                console.log(`    ⏱️  Sentence end - pausing for ${delay}ms (reset to ${WORD_DELAY_START}ms)`)
+            }
+            // Check if word ends with comma, semicolon, or colon
+            else if (word.endsWith(',') || word.endsWith(';') || word.endsWith(':')) {
+                delay = COMMA_DELAY
+                currentWordDelay = WORD_DELAY_START // Reset acceleration
+                console.log(`    ⏱️  Pause punctuation - pausing for ${delay}ms (reset to ${WORD_DELAY_START}ms)`)
+            }
+            // Check if word is a paragraph marker (empty or just newlines)
+            else if (word.trim() === '' || word === '\n' || word === '\n\n') {
+                delay = PARAGRAPH_DELAY
+                currentWordDelay = WORD_DELAY_START // Reset acceleration
+                console.log(`    ⏱️  Paragraph break - pausing for ${delay}ms (reset to ${WORD_DELAY_START}ms)`)
+            }
+            // Normal word - accelerate!
+            else {
+                console.log(`    ⏱️  Word delay: ${currentWordDelay.toFixed(0)}ms`)
+                // Accelerate for next word
+                currentWordDelay = Math.max(WORD_DELAY_MIN, currentWordDelay * WORD_ACCELERATION)
+            }
+
+            setTimeout(displayNextWord, delay)
+        } else {
+            // Check again in a bit if queue is empty
+            setTimeout(displayNextWord, 100)
         }
-    }, 1000 / WORDS_PER_SECOND) // 1 word per second
+    }
+
+    // Start the display loop
+    displayNextWord()
 }
 
 // Start displaying words from queue
@@ -180,19 +225,20 @@ startWordDisplay()
 
 // Generate text
 async function generate() {
-    // Check if we have too many generations queued
-    if (generationQueue >= MAX_GENERATION_LOOKAHEAD) {
-        console.log(`⏸️  Skipping generation - already ${generationQueue} generations queued`)
-        setTimeout(generate, 1000)
+    // Check if buffer is full
+    if (wordQueue.length > MAX_BUFFER_SIZE) {
+        console.log(`⏸️  Buffer full - ${wordQueue.length}/${MAX_BUFFER_SIZE} words buffered, waiting...`)
+        statusEl.textContent = `buffer full (${wordQueue.length} words)`
+        setTimeout(generate, 2000) // Check again in 2 seconds
         return
     }
 
     if (prompts.length === 0) return
 
     generationQueue++
-    console.log(`🎯 Starting generation (${generationQueue}/${MAX_GENERATION_LOOKAHEAD} queued)`)
+    console.log(`🎯 Starting generation #${generationQueue} (buffer: ${wordQueue.length}/${MAX_BUFFER_SIZE} words)`)
 
-    statusEl.textContent = `generating... (${generationQueue} queued, ${wordQueue.length} words buffered)`
+    statusEl.textContent = `generating... (${wordQueue.length} words buffered)`
 
     try {
         const startTime = performance.now()
@@ -228,11 +274,6 @@ async function generate() {
             prompt: contextPrompt,
             stream: true,
             raw: true,
-            options: {
-                temperature: 0.7,
-                num_predict: 100,  // Longer generations now that we're buffering
-                num_ctx: 512,     // Smaller context window
-            },
             keep_alive: -1  // Keep loaded indefinitely
         })
 
@@ -318,10 +359,16 @@ async function generate() {
         generationQueue--
         statusEl.textContent = `${wordQueue.length} words buffered`
 
-        console.log(`✨ Generation complete - ${generationQueue} generations remaining, ${wordQueue.length} words in queue`)
+        console.log(`✨ Generation #${generationQueue + 1} complete - buffer now at ${wordQueue.length}/${MAX_BUFFER_SIZE} words`)
 
-        // Immediately start next generation (don't wait for display to finish)
-        setTimeout(generate, 100)
+        // Immediately start next generation if buffer isn't full
+        if (wordQueue.length < MAX_BUFFER_SIZE) {
+            console.log(`🔄 Buffer not full, starting next generation immediately`)
+            setTimeout(generate, 100)
+        } else {
+            console.log(`⏸️  Buffer full, will check again later`)
+            setTimeout(generate, 2000)
+        }
 
     } catch (error) {
         console.error('Generation error:', error)
