@@ -3,19 +3,30 @@ import p5 from 'p5'
 // Ocean of Letters - Physics-based letter animation
 
 // Physics constants
-const REPULSION_RADIUS = 15       // Distance at which letters repel (very short)
-const REPULSION_STRENGTH = 0.25   // How strongly letters push apart (weak)
+const REPULSION_RADIUS = 20       // Distance at which letters repel
+const REPULSION_STRENGTH = 10.0    // How strongly letters push apart (substantially increased)
 const ATTRACTION_MIN = 50         // Minimum distance for particle attraction
 const ATTRACTION_MAX = 150        // Maximum distance for particle attraction
 const ATTRACTION_STRENGTH = 0.05  // Weak attraction between particles
 const GRAVITY_STRENGTH = 0.02     // Pull toward center (fairly weak)
-const SPHERE_RADIUS = 250         // Target radius for the sphere
+const COLLISION_SPEED_THRESHOLD = 0.5 // Minimum impact speed to create spin
+const COLLISION_SPIN_FACTOR = 0.08    // How much impact creates spin (higher = more dramatic)
+const SPIN_COUPLING_RADIUS = 0   // Distance for rotational influence
+const SPIN_COUPLING_STRENGTH = 0.008 // How strongly nearby particles influence each other's spin
+const SPIN_NOISE = 0.003          // Random rotational perturbation to prevent stasis
+const WORD_DISSOLVE_DISTANCE = 500 // Distance from center before word dissolves
+const WORD_ROTATION_SPEED = 0.001  // How fast word direction rotates around center
+const LAUNCH_CURVE_STRENGTH = 20 // Perpendicular component for curved launch
 
 // Letter class with physics
 class Letter {
     constructor(char, x, y, p) {
         this.char = char
         this.p = p
+
+        // Visual (must be defined first for radius calculation)
+        this.size = 24
+        this.alpha = 255
 
         // Physics
         this.pos = p.createVector(x, y)
@@ -25,16 +36,19 @@ class Letter {
         this.maxForce = 0.2
         this.mass = 1
 
+        // Rotational physics
+        this.angle = p.random(p.TWO_PI)
+        this.angularVel = p.random(-0.1, 0.1)
+        this.angularAcc = 0
+        this.radius = this.size / 2 // Approximate radius for torque calculations
+        this.momentOfInertia = this.mass * this.radius * this.radius
+
         // Word formation
         this.recruited = false
         this.targetPos = null
         this.targetIndex = -1
         this.wordId = null
         this.launched = false
-
-        // Visual
-        this.size = 24
-        this.alpha = 255
     }
 
     applyForce(force) {
@@ -42,6 +56,11 @@ class Letter {
         let f = force.copy()
         f.div(this.mass)
         this.acc.add(f)
+    }
+
+    applyTorque(torque) {
+        // τ = I * α, so α = τ / I
+        this.angularAcc += torque / this.momentOfInertia
     }
 
     // Calculate repulsion from other letters (collision avoidance)
@@ -54,16 +73,45 @@ class Letter {
         for (let other of others) {
             if (other === this || other.launched) continue
 
-            let d = p5.Vector.dist(this.pos, other.pos)
+            let diff = p5.Vector.sub(this.pos, other.pos)
+            let d = diff.mag()
 
             // Only repel if within radius
             if (d > 0 && d < REPULSION_RADIUS) {
+                // Normalized collision normal
+                let normal = diff.copy().normalize()
+
                 // Repulsion force: stronger when closer
-                let diff = p5.Vector.sub(this.pos, other.pos)
-                diff.normalize()
-                diff.div(d) // Inverse distance (closer = stronger)
-                diff.mult(REPULSION_STRENGTH)
-                repulsionForce.add(diff)
+                let forceMag = REPULSION_STRENGTH / d
+                let force = normal.copy().mult(forceMag)
+                repulsionForce.add(force)
+
+                // Calculate spin from collision (only during significant impacts)
+                let relativeVel = p5.Vector.sub(this.vel, other.vel)
+                let impactSpeed = relativeVel.mag()
+
+                // Only apply torque if there's meaningful relative motion
+                if (impactSpeed > COLLISION_SPEED_THRESHOLD) {
+                    // Tangent vector (perpendicular to collision normal)
+                    let tangent = this.p.createVector(-normal.y, normal.x)
+
+                    // Component of relative velocity along tangent (glancing blow)
+                    let tangentVel = relativeVel.dot(tangent)
+
+                    // Base torque from glancing collision
+                    // Can be positive or negative - naturally opposes or enhances existing spin
+                    let collisionTorque = tangentVel * impactSpeed * COLLISION_SPIN_FACTOR
+
+                    // Angular momentum exchange: spinning particles can transfer spin during collision
+                    // This allows collisions to reduce existing spin significantly
+                    let spinDifference = other.angularVel - this.angularVel
+                    let spinExchange = spinDifference * impactSpeed * 0.05
+
+                    // Total torque combines collision geometry and spin exchange
+                    let totalTorque = collisionTorque + spinExchange
+                    this.applyTorque(totalTorque)
+                }
+
                 count++
             }
         }
@@ -103,6 +151,37 @@ class Letter {
         }
     }
 
+    // Rotational coupling with nearby particles
+    spinCouple(others) {
+        if (this.launched) return // No coupling when launched
+
+        let torqueSum = 0
+        let totalWeight = 0
+
+        for (let other of others) {
+            if (other === this || other.launched) continue
+
+            let d = p5.Vector.dist(this.pos, other.pos)
+
+            // Only couple if within radius
+            if (d > 0 && d < SPIN_COUPLING_RADIUS) {
+                // Stronger influence from closer particles (inverse square for locality)
+                let weight = 1.0 / (d * d + 1)
+
+                // Try to match the neighbor's spin (creates vortices)
+                let spinDiff = other.angularVel - this.angularVel
+                torqueSum += spinDiff * weight
+                totalWeight += weight
+            }
+        }
+
+        if (totalWeight > 0) {
+            // Apply weighted average torque
+            let avgTorque = torqueSum / totalWeight
+            this.applyTorque(avgTorque * SPIN_COUPLING_STRENGTH)
+        }
+    }
+
     // Weak gravitational attraction to center point
     gravitate(centerX, centerY) {
         if (this.launched) return // No gravity when launched
@@ -120,7 +199,7 @@ class Letter {
     }
 
     // Ocean swimming behavior
-    swim() {
+    swim(wordDirection = null) {
         if (this.recruited && !this.launched) {
             // Move toward target position when recruited
             if (this.targetPos) {
@@ -128,32 +207,62 @@ class Letter {
                 let d = desired.mag()
 
                 // Slow down as we approach
-                let speed = this.maxSpeed
+                let speed = this.maxSpeed * 2 // Faster for word formation
                 if (d < 100) {
-                    speed = this.p.map(d, 0, 100, 0, this.maxSpeed)
+                    speed = this.p.map(d, 0, 100, 0, speed)
                 }
 
                 desired.setMag(speed)
                 let steer = p5.Vector.sub(desired, this.vel)
-                steer.limit(this.maxForce * 3) // Even stronger attraction for words
+                steer.limit(this.maxForce * 4) // Strong attraction for words
                 this.applyForce(steer)
+
+                // Align rotation to word's direction and zero out spin
+                if (wordDirection !== null) {
+                    // Target angle is the word's direction
+                    let targetAngle = wordDirection
+                    let angleDiff = targetAngle - this.angle
+
+                    // Normalize angle difference to [-PI, PI]
+                    while (angleDiff > this.p.PI) angleDiff -= this.p.TWO_PI
+                    while (angleDiff < -this.p.PI) angleDiff += this.p.TWO_PI
+
+                    // Apply strong corrective torque to align with word
+                    let alignmentStrength = 0.15
+                    this.applyTorque(angleDiff * alignmentStrength)
+
+                    // Dampen angular velocity to normalize spin to zero
+                    this.angularVel *= 0.9
+                }
             }
         }
     }
 
     // Physics update
     update() {
-        // Gravity when launched
-        if (this.launched) {
-            this.applyForce(this.p.createVector(0, 0.3)) // Falling
+        // No forces when launched - letters maintain trajectory
+        if (!this.launched) {
+            this.swim()
         }
 
-        this.swim()
-
+        // Update linear motion
         this.vel.add(this.acc)
-        this.vel.limit(this.maxSpeed)
+        if (!this.launched) {
+            this.vel.limit(this.maxSpeed)
+        }
         this.pos.add(this.vel)
         this.acc.mult(0)
+
+        // Update rotational motion
+        this.angularVel += this.angularAcc
+
+        // Add small random perturbation to prevent stasis (only when not recruited)
+        if (!this.recruited && !this.launched) {
+            this.angularVel += this.p.random(-SPIN_NOISE, SPIN_NOISE)
+        }
+
+        this.angle += this.angularVel
+        this.angularAcc = 0
 
         // Wrap around edges (ocean is infinite)
         if (this.pos.x < 0) this.pos.x = this.p.width
@@ -164,25 +273,35 @@ class Letter {
 
     display() {
         this.p.push()
-        this.p.fill(255, this.alpha)
+
+        // Apply rotation
+        this.p.translate(this.pos.x, this.pos.y)
+        this.p.rotate(this.angle)
+
+        // Draw letter at origin (since we translated)
+        this.p.fill(0, this.alpha) // Black text
         this.p.textSize(this.size)
         this.p.textAlign(this.p.CENTER, this.p.CENTER)
-        this.p.text(this.char, this.pos.x, this.pos.y)
-
-        // Debug: show target
-        if (this.recruited && this.targetPos && !this.launched) {
-            this.p.stroke(0, 255, 0, 100)
-            this.p.strokeWeight(1)
-            this.p.line(this.pos.x, this.pos.y, this.targetPos.x, this.targetPos.y)
-        }
+        this.p.textFont('Courier New, monospace')
+        this.p.text(this.char, 0, 0)
 
         this.p.pop()
+
+        // Debug: show target (draw after pop to avoid rotation)
+        if (this.recruited && this.targetPos && !this.launched) {
+            this.p.push()
+            this.p.stroke(0, 0, 0, 50) // Faint black line
+            this.p.strokeWeight(1)
+            this.p.line(this.pos.x, this.pos.y, this.targetPos.x, this.targetPos.y)
+            this.p.pop()
+        }
     }
 }
 
 // Track active words being formed
 let activeWords = []
 let nextWordId = 0
+let currentWordDirection = 0 // Global rotating spawn angle for new words
 
 class WordFormation {
     constructor(word, p) {
@@ -190,12 +309,58 @@ class WordFormation {
         this.id = nextWordId++
         this.letters = []
         this.p = p
-        this.centerX = p.width / 2
-        this.centerY = p.height * 0.7 // Form in lower part of ocean
+
+        // Dynamic position - starts at center, moves outward
+        this.pos = p.createVector(p.width / 2, p.height / 2)
+
+        // Use current global direction (fixed for this word's lifetime)
+        this.direction = currentWordDirection
+        this.vel = p5.Vector.fromAngle(this.direction).mult(0.8)
+
         this.formed = false
         this.launching = false
         this.launched = false
-        this.launchVelocity = p.createVector(0, -8)
+    }
+
+    // Update word position and letter targets
+    update() {
+        if (this.launched) return
+
+        // Move the word formation outward (direction is fixed)
+        this.pos.add(this.vel)
+
+        // Wrap around screen edges
+        if (this.pos.x < 0) this.pos.x = this.p.width
+        if (this.pos.x > this.p.width) this.pos.x = 0
+        if (this.pos.y < 0) this.pos.y = this.p.height
+        if (this.pos.y > this.p.height) this.pos.y = 0
+
+        // Update target positions for all letters (moving with the word)
+        this.updateTargetPositions()
+    }
+
+    // Update target positions relative to word's current position
+    updateTargetPositions() {
+        let wordWidth = this.word.length * 30
+        let startX = -wordWidth / 2
+
+        for (let i = 0; i < this.letters.length; i++) {
+            let letter = this.letters[i]
+            if (letter.recruited && letter.targetIndex !== -1) {
+                // Position relative to word center (horizontal line)
+                let localX = startX + letter.targetIndex * 30
+                let localY = 0
+
+                // Rotate position based on word direction
+                let cos = Math.cos(this.direction)
+                let sin = Math.sin(this.direction)
+                let rotatedX = localX * cos - localY * sin
+                let rotatedY = localX * sin + localY * cos
+
+                // Set target to world position
+                letter.targetPos = p5.Vector.add(this.pos, this.p.createVector(rotatedX, rotatedY))
+            }
+        }
     }
 
     // Check if word is fully formed (all letters in position)
@@ -206,7 +371,6 @@ class WordFormation {
 
         let allClose = true
         for (let letter of this.letters) {
-            // Check if targetPos exists (it might be null after release)
             if (!letter.targetPos) {
                 allClose = false
                 break
@@ -222,8 +386,8 @@ class WordFormation {
         if (allClose && !this.formed) {
             this.formed = true
             console.log(`Word "${this.word}" formed!`)
-            // Wait a moment then launch
-            setTimeout(() => this.launch(), 500)
+            // Launch immediately once formed
+            this.launch()
         }
     }
 
@@ -231,23 +395,54 @@ class WordFormation {
         console.log(`Launching word "${this.word}"!`)
         this.launching = true
 
-        // Give all letters upward velocity
+        // Accelerate in the direction the word is already moving
+        let launchSpeed = 4 // Faster than formation speed
+        let launchVel = p5.Vector.fromAngle(this.direction).mult(launchSpeed)
+
+        // Add perpendicular component for curved trajectory
+        // Curve in opposite direction of rotation (creates spiral)
+        let perpAngle = this.direction - this.p.HALF_PI // 90 degrees counter to rotation
+        let curveVel = p5.Vector.fromAngle(perpAngle).mult(LAUNCH_CURVE_STRENGTH)
+        launchVel.add(curveVel)
+
+        // Give all letters launch velocity in the word's direction
         for (let letter of this.letters) {
             letter.launched = true
-            letter.vel = this.launchVelocity.copy()
-            letter.vel.x += this.p.random(-1, 1) // Slight spread
+            // Base velocity plus small random spread
+            letter.vel = launchVel.copy()
+            letter.vel.x += this.p.random(-0.3, 0.3)
+            letter.vel.y += this.p.random(-0.3, 0.3)
         }
+    }
 
-        // After some time in air, release letters
-        setTimeout(() => {
-            for (let letter of this.letters) {
-                letter.recruited = false
-                letter.wordId = null
-                letter.targetPos = null
-                letter.targetIndex = -1
-            }
-            this.launched = true
-        }, 2000)
+    // Dissolve the word - release letters back to normal physics
+    dissolve() {
+        if (this.launched) return
+
+        console.log(`Dissolving word "${this.word}"`)
+        for (let letter of this.letters) {
+            letter.recruited = false
+            letter.launched = false
+            letter.wordId = null
+            letter.targetPos = null
+            letter.targetIndex = -1
+            // Keep current velocity but reduce it
+            letter.vel.mult(0.3)
+        }
+        this.launched = true
+    }
+
+    // Check if word is far enough from center to dissolve
+    shouldDissolve() {
+        // if (!this.launching) return false
+
+        // Calculate distance from screen center
+        let centerX = this.p.width / 2
+        let centerY = this.p.height / 2
+        let center = this.p.createVector(centerX, centerY)
+        let distanceFromCenter = p5.Vector.dist(this.pos, center)
+
+        return distanceFromCenter > WORD_DISSOLVE_DISTANCE
     }
 }
 
@@ -271,40 +466,57 @@ const sketch = (p) => {
     }
 
     p.draw = () => {
-        p.background(1, 17, 34) // Deep ocean blue
+        p.background(255) // White
 
-        // Draw sphere center (debug)
         let centerX = p.width / 2
         let centerY = p.height / 2
-        p.noFill()
-        p.stroke(255, 255, 255, 30)
-        p.strokeWeight(1)
-        p.circle(centerX, centerY, SPHERE_RADIUS * 2)
+
+        // Rotate global word spawn direction
+        currentWordDirection += WORD_ROTATION_SPEED
+
+        // Update word formations first
+        for (let i = activeWords.length - 1; i >= 0; i--) {
+            let word = activeWords[i]
+
+            // Update word position and targets
+            word.update()
+            word.checkFormed()
+
+            // Check if should dissolve
+            if (word.shouldDissolve()) {
+                word.dissolve()
+            }
+
+            // Remove dissolved words
+            if (word.launched) {
+                activeWords.splice(i, 1)
+                console.log(`Word "${word.word}" completed and removed`)
+            }
+        }
+
+        // Build a map of letters to their word directions
+        let letterWordDirections = new Map()
+        for (let word of activeWords) {
+            for (let letter of word.letters) {
+                letterWordDirections.set(letter, word.direction)
+            }
+        }
 
         // Apply forces to all letters
         for (let letter of letters) {
             letter.repel(letters)              // Short-range repulsion (collision avoidance)
             letter.attract(letters)            // Medium-range attraction (clustering)
             letter.gravitate(centerX, centerY) // Weak attraction to sphere center
-            letter.swim()                      // Word formation behaviors
+
+            // Pass word direction if letter is recruited
+            let wordDirection = letterWordDirections.get(letter) || null
+            letter.swim(wordDirection)         // Word formation behaviors
         }
 
         // Update and display all letters
         for (let letter of letters) {
             letter.update()
             letter.display()
-        }
-
-        // Update word formations
-        for (let i = activeWords.length - 1; i >= 0; i--) {
-            let word = activeWords[i]
-            word.checkFormed()
-
-            // Remove completed words
-            if (word.launched) {
-                activeWords.splice(i, 1)
-                console.log(`Word "${word.word}" completed and removed`)
-            }
         }
     }
 
@@ -320,10 +532,6 @@ const sketch = (p) => {
 
             let formation = new WordFormation(word, p)
 
-            // Calculate target positions for each letter in the word
-            let wordWidth = word.length * 30
-            let startX = formation.centerX - wordWidth / 2
-
             // Find and recruit available letters
             for (let i = 0; i < word.length; i++) {
                 let char = word[i]
@@ -338,10 +546,10 @@ const sketch = (p) => {
                     continue
                 }
 
-                // Sort by distance and take closest
+                // Sort by distance to formation center
                 availableLetters.sort((a, b) => {
-                    let distA = p5.Vector.dist(a.pos, p.createVector(startX + i * 30, formation.centerY))
-                    let distB = p5.Vector.dist(b.pos, p.createVector(startX + i * 30, formation.centerY))
+                    let distA = p5.Vector.dist(a.pos, formation.pos)
+                    let distB = p5.Vector.dist(b.pos, formation.pos)
                     return distA - distB
                 })
 
@@ -349,12 +557,15 @@ const sketch = (p) => {
                 letter.recruited = true
                 letter.wordId = formation.id
                 letter.targetIndex = i
-                letter.targetPos = p.createVector(startX + i * 30, formation.centerY)
+                // Target will be set by updateTargetPositions()
 
                 formation.letters.push(letter)
 
                 console.log(`  Recruited "${char}" at index ${i}`)
             }
+
+            // Set initial target positions
+            formation.updateTargetPositions()
 
             activeWords.push(formation)
             console.log(`Word formation started with ${formation.letters.length}/${word.length} letters`)
