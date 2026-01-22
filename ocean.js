@@ -14,9 +14,9 @@ const COLLISION_SPIN_FACTOR = 0.08    // How much impact creates spin (higher = 
 const SPIN_COUPLING_RADIUS = 0   // Distance for rotational influence
 const SPIN_COUPLING_STRENGTH = 0.008 // How strongly nearby particles influence each other's spin
 const SPIN_NOISE = 0.003          // Random rotational perturbation to prevent stasis
-const WORD_DISSOLVE_DISTANCE = 500 // Distance from center before word dissolves
 const WORD_ROTATION_SPEED = 0.001  // How fast word direction rotates around center
-const LAUNCH_CURVE_STRENGTH = 20 // Perpendicular component for curved launch
+const PATH_MAX_DISTANCE = 1000      // Maximum distance word travels from center
+const PATH_SPEED = 0.0005           // How fast word progresses along path (0-1)
 
 // Letter class with physics
 class Letter {
@@ -288,13 +288,13 @@ class Letter {
         this.p.pop()
 
         // Debug: show target (draw after pop to avoid rotation)
-        if (this.recruited && this.targetPos && !this.launched) {
-            this.p.push()
-            this.p.stroke(0, 0, 0, 50) // Faint black line
-            this.p.strokeWeight(1)
-            this.p.line(this.pos.x, this.pos.y, this.targetPos.x, this.targetPos.y)
-            this.p.pop()
-        }
+        // if (this.recruited && this.targetPos && !this.launched) {
+        //     this.p.push()
+        //     this.p.stroke(0, 0, 0, 50) // Faint black line
+        //     this.p.strokeWeight(1)
+        //     this.p.line(this.pos.x, this.pos.y, this.targetPos.x, this.targetPos.y)
+        //     this.p.pop()
+        // }
     }
 }
 
@@ -310,15 +310,18 @@ class WordFormation {
         this.letters = []
         this.p = p
 
-        // Dynamic position - starts at center, moves outward
+        // Dynamic position - follows curved path from center
         this.pos = p.createVector(p.width / 2, p.height / 2)
 
         // Use current global direction (fixed for this word's lifetime)
         this.direction = currentWordDirection
-        this.vel = p5.Vector.fromAngle(this.direction).mult(0.8)
 
-        this.formed = false
-        this.launching = false
+        // Path progress: 0 = start at center, 1 = complete loop back to center
+        this.pathProgress = 0
+
+        // Current orientation of the word (changes as it curves)
+        this.currentOrientation = this.direction
+
         this.launched = false
     }
 
@@ -326,14 +329,38 @@ class WordFormation {
     update() {
         if (this.launched) return
 
-        // Move the word formation outward (direction is fixed)
-        this.pos.add(this.vel)
+        // Follow curved path from center, outward, and back to center
+        this.pathProgress += PATH_SPEED
 
-        // Wrap around screen edges
-        if (this.pos.x < 0) this.pos.x = this.p.width
-        if (this.pos.x > this.p.width) this.pos.x = 0
-        if (this.pos.y < 0) this.pos.y = this.p.height
-        if (this.pos.y > this.p.height) this.pos.y = 0
+        let centerX = this.p.width / 2
+        let centerY = this.p.height / 2
+
+        // Parametric curve: goes out and comes back
+        // Use sine for smooth out-and-back motion (0 -> 1 -> 0)
+        let t = this.pathProgress
+        let distanceFromCenter = Math.sin(t * Math.PI) * PATH_MAX_DISTANCE
+
+        // Angle curves around as we progress
+        // This creates the arc effect
+        let angleOffset = t * Math.PI * 1.5 // Curves 270 degrees
+        let currentAngle = this.direction + angleOffset
+
+        // Calculate position along the curved path
+        this.pos.x = centerX + Math.cos(currentAngle) * distanceFromCenter
+        this.pos.y = centerY + Math.sin(currentAngle) * distanceFromCenter
+
+        // Calculate tangent direction (direction of motion along path)
+        // This is the direction the word should face as it curves
+        let dr_dt = Math.PI * Math.cos(t * Math.PI) * PATH_MAX_DISTANCE
+        let dtheta_dt = Math.PI * 1.5
+        let r_dtheta = distanceFromCenter * dtheta_dt
+
+        // Velocity components in Cartesian coordinates
+        let vx = dr_dt * Math.cos(currentAngle) - r_dtheta * Math.sin(currentAngle)
+        let vy = dr_dt * Math.sin(currentAngle) + r_dtheta * Math.cos(currentAngle)
+
+        // Tangent angle is the direction of velocity
+        this.currentOrientation = Math.atan2(vy, vx)
 
         // Update target positions for all letters (moving with the word)
         this.updateTargetPositions()
@@ -351,9 +378,9 @@ class WordFormation {
                 let localX = startX + letter.targetIndex * 30
                 let localY = 0
 
-                // Rotate position based on word direction
-                let cos = Math.cos(this.direction)
-                let sin = Math.sin(this.direction)
+                // Rotate position based on current orientation (follows path curve)
+                let cos = Math.cos(this.currentOrientation)
+                let sin = Math.sin(this.currentOrientation)
                 let rotatedX = localX * cos - localY * sin
                 let rotatedY = localX * sin + localY * cos
 
@@ -363,57 +390,6 @@ class WordFormation {
         }
     }
 
-    // Check if word is fully formed (all letters in position)
-    checkFormed() {
-        // Skip if already formed, launching, or launched
-        if (this.formed || this.launching || this.launched) return
-        if (this.letters.length !== this.word.length) return
-
-        let allClose = true
-        for (let letter of this.letters) {
-            if (!letter.targetPos) {
-                allClose = false
-                break
-            }
-
-            let d = p5.Vector.dist(letter.pos, letter.targetPos)
-            if (d > 5) {
-                allClose = false
-                break
-            }
-        }
-
-        if (allClose && !this.formed) {
-            this.formed = true
-            console.log(`Word "${this.word}" formed!`)
-            // Launch immediately once formed
-            this.launch()
-        }
-    }
-
-    launch() {
-        console.log(`Launching word "${this.word}"!`)
-        this.launching = true
-
-        // Accelerate in the direction the word is already moving
-        let launchSpeed = 4 // Faster than formation speed
-        let launchVel = p5.Vector.fromAngle(this.direction).mult(launchSpeed)
-
-        // Add perpendicular component for curved trajectory
-        // Curve in opposite direction of rotation (creates spiral)
-        let perpAngle = this.direction - this.p.HALF_PI // 90 degrees counter to rotation
-        let curveVel = p5.Vector.fromAngle(perpAngle).mult(LAUNCH_CURVE_STRENGTH)
-        launchVel.add(curveVel)
-
-        // Give all letters launch velocity in the word's direction
-        for (let letter of this.letters) {
-            letter.launched = true
-            // Base velocity plus small random spread
-            letter.vel = launchVel.copy()
-            letter.vel.x += this.p.random(-0.3, 0.3)
-            letter.vel.y += this.p.random(-0.3, 0.3)
-        }
-    }
 
     // Dissolve the word - release letters back to normal physics
     dissolve() {
@@ -432,17 +408,11 @@ class WordFormation {
         this.launched = true
     }
 
-    // Check if word is far enough from center to dissolve
+    // Check if word has traveled far enough from center
     shouldDissolve() {
-        // if (!this.launching) return false
-
-        // Calculate distance from screen center
-        let centerX = this.p.width / 2
-        let centerY = this.p.height / 2
-        let center = this.p.createVector(centerX, centerY)
-        let distanceFromCenter = p5.Vector.dist(this.pos, center)
-
-        return distanceFromCenter > WORD_DISSOLVE_DISTANCE
+        // Dissolve after passing the maximum distance point
+        // (at t=0.5 distance is maximum, dissolve shortly after)
+        return this.pathProgress >= 0.2
     }
 }
 
@@ -480,7 +450,6 @@ const sketch = (p) => {
 
             // Update word position and targets
             word.update()
-            word.checkFormed()
 
             // Check if should dissolve
             if (word.shouldDissolve()) {
@@ -494,11 +463,11 @@ const sketch = (p) => {
             }
         }
 
-        // Build a map of letters to their word directions
+        // Build a map of letters to their word orientations
         let letterWordDirections = new Map()
         for (let word of activeWords) {
             for (let letter of word.letters) {
-                letterWordDirections.set(letter, word.direction)
+                letterWordDirections.set(letter, word.currentOrientation)
             }
         }
 
@@ -598,3 +567,15 @@ window.formWord = () => {
 window.addLetters = () => {
     window.p5Ocean.addLetters(50)
 }
+
+// Add keyboard shortcut for word formation
+document.addEventListener('keydown', (e) => {
+    // Check if Enter was pressed
+    if (e.key === 'Enter') {
+        let input = document.getElementById('wordInput')
+        if (document.activeElement === input && input.value.trim()) {
+            window.formWord()
+            e.preventDefault()
+        }
+    }
+})
