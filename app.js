@@ -1,5 +1,9 @@
 import p5 from 'p5'
-import ollama from 'ollama/browser'
+import { CreateMLCEngine } from '@mlc-ai/web-llm'
+
+// WebLLM engine instance (initialized in init())
+let engine = null
+const MODEL_ID = 'SmolLM2-360M-Instruct-q4f16_1-MLC'
 
 // ============================================================================
 // CONFIGURATION
@@ -430,20 +434,19 @@ class StreamManager {
             this.generatedText += displayText
             this.addToQueue(displayText)
 
-            const response = await ollama.generate({
-                model: 'tinydolphin',
-                prompt: contextPrompt,
+            const chunks = await engine.chat.completions.create({
+                messages: [{ role: 'user', content: contextPrompt }],
                 stream: true,
-                raw: true,
-                keep_alive: -1
+                max_tokens: 150
             })
 
             let buffer = ''
 
-            for await (const part of response) {
-                if (part.response) {
-                    buffer += part.response
-                    this.generatedText += part.response
+            for await (const chunk of chunks) {
+                const content = chunk.choices[0]?.delta?.content || ''
+                if (content) {
+                    buffer += content
+                    this.generatedText += content
 
                     if (/\s/.test(buffer)) {
                         const wordParts = buffer.split(/(\s+)/)
@@ -459,7 +462,7 @@ class StreamManager {
                     }
                 }
 
-                if (part.done && buffer.trim()) {
+                if (chunk.choices[0]?.finish_reason && buffer.trim()) {
                     this.addToQueue(buffer)
                 }
             }
@@ -803,22 +806,30 @@ new p5(sketch, 'canvas-container')
 
 async function init() {
     const manager = window.oceanStream.streamManager
+    const statusEl = document.getElementById('status')
 
     const loaded = await manager.loadPrompts()
     if (!loaded) return
 
     try {
-        const models = await ollama.list()
-        const hasModel = models.models.some(m => m.name.includes('tinydolphin'))
+        statusEl.textContent = 'Loading AI model...'
 
-        if (!hasModel) {
-            await ollama.pull({ model: 'tinydolphin', stream: true })
-        }
+        engine = await CreateMLCEngine(MODEL_ID, {
+            initProgressCallback: (progress) => {
+                const percent = Math.round(progress.progress * 100)
+                statusEl.textContent = `Loading model: ${percent}%`
+                console.log('Model loading:', progress)
+            }
+        })
+
+        statusEl.textContent = 'Model ready!'
+        setTimeout(() => { statusEl.textContent = '' }, 2000)
 
         manager.generate()
 
     } catch (error) {
         console.error('Initialization error:', error)
+        statusEl.textContent = 'Error loading model. WebGPU required.'
     }
 }
 
