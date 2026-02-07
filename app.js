@@ -7,7 +7,7 @@ import ollama from 'ollama/browser'
 
 // LLM Configuration
 const MAX_CONTEXT_LENGTH = 512
-const MAX_BUFFER_SIZE = 500
+const MAX_SENTENCE_BUFFER = 50 // Max sentences to buffer (~500 words at 10 words/sentence)
 
 // Ocean Physics Constants
 const REPULSION_RADIUS = 20
@@ -15,13 +15,15 @@ const REPULSION_STRENGTH = 10.0
 const ATTRACTION_MIN = 50
 const ATTRACTION_MAX = 150
 const ATTRACTION_STRENGTH = 0.05
-const GRAVITY_STRENGTH = 0.08
+const GRAVITY_STRENGTH = 0.07
 const COLLISION_SPEED_THRESHOLD = 0.5
 const COLLISION_SPIN_FACTOR = 0.08
 const SPIN_NOISE = 0.003
 const WORD_ROTATION_SPEED = 0.001
 const PATH_MAX_DISTANCE = 1000
 const PATH_SPEED = 0.0005
+const MAX_LETTER_SPEED = 3 // Target cruise speed for letters
+const SPEED_DECELERATION = 0.3 // Deceleration rate when exceeding max speed
 
 // Path Curve - Consistent gentle curve for all words
 const PATH_CURVE_AMOUNT = 0.2  // Curve amount in radians
@@ -44,7 +46,7 @@ class Letter {
         this.pos = p.createVector(x, y)
         this.vel = p.createVector(p.random(-0.5, 0.5), p.random(-0.5, 0.5))
         this.acc = p.createVector(0, 0)
-        this.maxSpeed = 3
+        this.maxSpeed = MAX_LETTER_SPEED
         this.maxForce = 0.2
         this.mass = 1
 
@@ -60,7 +62,7 @@ class Letter {
         this.targetPos = null
         this.targetIndex = -1
         this.wordId = null
-        this.launched = false
+        this.dragging = false
     }
 
     applyForce(force) {
@@ -73,13 +75,13 @@ class Letter {
     }
 
     repel(others) {
-        if (this.launched) return
+        if (this.dragging) return
 
         let repulsionForce = this.p.createVector(0, 0)
         let count = 0
 
         for (const other of others) {
-            if (other === this || other.launched) continue
+            if (other === this) continue
 
             const diff = p5.Vector.sub(this.pos, other.pos)
             const d = diff.mag()
@@ -112,13 +114,13 @@ class Letter {
     }
 
     attract(others) {
-        if (this.launched) return
+        if (this.dragging) return
 
         let attractionForce = this.p.createVector(0, 0)
         let count = 0
 
         for (const other of others) {
-            if (other === this || other.launched) continue
+            if (other === this) continue
 
             const d = p5.Vector.dist(this.pos, other.pos)
 
@@ -135,7 +137,7 @@ class Letter {
     }
 
     gravitate(centerX, centerY) {
-        if (this.launched) return
+        if (this.dragging) return
 
         const center = this.p.createVector(centerX, centerY)
         const toCenter = p5.Vector.sub(center, this.pos)
@@ -147,7 +149,7 @@ class Letter {
     }
 
     swim(wordDirection = null) {
-        if (this.recruited && !this.launched && this.targetPos) {
+        if (this.recruited && this.targetPos) {
             const desired = p5.Vector.sub(this.targetPos, this.pos)
             const d = desired.mag()
 
@@ -173,16 +175,26 @@ class Letter {
 
     update() {
         // Linear motion
-        this.vel.add(this.acc)
-        if (!this.launched) {
-            this.vel.limit(this.maxSpeed)
+        if (!this.dragging) {
+            this.vel.add(this.acc)
+
+            // Soft speed limit - allow exceeding max speed but gradually decelerate
+            const currentSpeed = this.vel.mag()
+            if (currentSpeed > this.maxSpeed) {
+                // Gradually decelerate toward maxSpeed
+                const excess = currentSpeed - this.maxSpeed
+                const newSpeed = currentSpeed - excess * SPEED_DECELERATION
+                this.vel.setMag(newSpeed)
+            }
+
+            this.pos.add(this.vel)
         }
-        this.pos.add(this.vel)
+
         this.acc.mult(0)
 
         // Rotational motion
         this.angularVel += this.angularAcc
-        if (!this.recruited && !this.launched) {
+        if (!this.recruited) {
             this.angularVel += this.p.random(-SPIN_NOISE, SPIN_NOISE)
         }
         this.angle += this.angularVel
@@ -219,13 +231,17 @@ const BURST_WORD_DELAY = 2000 // 2 seconds between words in a burst
 const BURST_COOLDOWN = 30000 // 30 seconds between bursts
 
 class WordFormation {
-    constructor(word, p) {
+    constructor(word, p, startX = null, startY = null) {
         this.word = word.toUpperCase()
         this.id = nextWordId++
         this.letters = []
         this.p = p
 
-        this.pos = p.createVector(p.width / 2, p.height / 2)
+        const x = startX !== null ? startX : p.width / 2
+        const y = startY !== null ? startY : p.height / 2
+        this.pos = p.createVector(x, y)
+        this.centerX = x  // Center X for this word's trajectory
+        this.centerY = y  // Center Y for this word's trajectory
         this.direction = currentWordDirection
         this.pathProgress = 0
         this.currentOrientation = this.direction
@@ -242,8 +258,9 @@ class WordFormation {
 
         this.pathProgress += PATH_SPEED
 
-        const centerX = this.p.width / 2
-        const centerY = this.p.height / 2
+        // Use the center position this word was created with
+        const centerX = this.centerX
+        const centerY = this.centerY
 
         // Parametric curved path with subtle random variation
         const t = this.pathProgress
@@ -294,7 +311,6 @@ class WordFormation {
 
         for (const letter of this.letters) {
             letter.recruited = false
-            letter.launched = false
             letter.wordId = null
             letter.targetPos = null
             letter.targetIndex = -1
@@ -317,7 +333,6 @@ class StreamManager {
         this.prompts = []
         this.currentPromptIndex = 0
         this.generatedText = ''
-        this.wordQueue = [] // Raw words from LLM
         this.sentenceBuffer = [] // Words accumulating into current sentence
         this.generationQueue = 0
         this.statusEl = document.getElementById('status')
@@ -332,7 +347,6 @@ class StreamManager {
             return true
         } catch (error) {
             console.error('Failed to load prompts:', error)
-            this.statusEl.textContent = 'Error loading prompts'
             return false
         }
     }
@@ -390,9 +404,9 @@ class StreamManager {
     }
 
     async generate() {
-        if (this.wordQueue.length > MAX_BUFFER_SIZE) {
-            console.log(`⏸️  Buffer full - waiting...`)
-            this.statusEl.textContent = `buffer full (${this.wordQueue.length} words)`
+        // Check if sentence buffer is full
+        if (burstQueue.length > MAX_SENTENCE_BUFFER) {
+            console.log(`⏸️  Buffer full - ${burstQueue.length} sentences buffered`)
             setTimeout(() => this.generate(), 2000)
             return
         }
@@ -400,7 +414,6 @@ class StreamManager {
         if (this.prompts.length === 0) return
 
         this.generationQueue++
-        this.statusEl.textContent = `generating... (${this.wordQueue.length} words buffered)`
 
         try {
             const truncatedContext = this.generatedText.length > MAX_CONTEXT_LENGTH
@@ -457,18 +470,16 @@ class StreamManager {
             }
 
             this.generationQueue--
-            this.statusEl.textContent = `${this.wordQueue.length} words buffered`
 
-            // Continue generating
-            if (this.wordQueue.length < MAX_BUFFER_SIZE) {
-                setTimeout(() => this.generate(), 100)
+            // Continue generating (with preemptive buffering)
+            if (burstQueue.length < MAX_SENTENCE_BUFFER) {
+                setTimeout(() => this.generate(), 100) // Generate quickly when buffer low
             } else {
-                setTimeout(() => this.generate(), 2000)
+                setTimeout(() => this.generate(), 2000) // Slow down when buffer full
             }
 
         } catch (error) {
             console.error('Generation error:', error)
-            this.statusEl.textContent = error.message
             this.generationQueue--
             setTimeout(() => this.generate(), 5000)
         }
@@ -485,8 +496,21 @@ const sketch = (p) => {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     const streamManager = new StreamManager()
 
+    // Center position (can be moved by clicking/dragging)
+    let centerX = 0
+    let centerY = 0
+    let draggingCenter = false
+
+    // Interaction state
+    let draggedLetter = null
+    let prevMousePos = null // For calculating throw velocity
+
     p.setup = () => {
         p.createCanvas(p.windowWidth, p.windowHeight)
+
+        // Initialize center to screen center
+        centerX = p.width / 2
+        centerY = p.height / 2
 
         // Initialize ocean with letters (doubled for richer letter pool)
         for (let i = 0; i < 400; i++) {
@@ -501,10 +525,6 @@ const sketch = (p) => {
 
     p.draw = () => {
         p.background(255)
-
-
-        const centerX = p.width / 2
-        const centerY = p.height / 2
 
         // Rotate global word spawn direction
         currentWordDirection += WORD_ROTATION_SPEED
@@ -663,10 +683,80 @@ const sketch = (p) => {
         p.resizeCanvas(p.windowWidth, p.windowHeight)
     }
 
+    p.mousePressed = () => {
+        // Check if clicking on a letter
+        for (const letter of letters) {
+            const d = p5.Vector.dist(letter.pos, p.createVector(p.mouseX, p.mouseY))
+            if (d < letter.radius * 2) {
+                draggedLetter = letter
+                letter.vel.mult(0) // Stop movement while dragging
+                letter.recruited = false // Release from any word formation
+                letter.dragging = true // Mark as being dragged
+                prevMousePos = p.createVector(p.mouseX, p.mouseY)
+                return
+            }
+        }
+
+        // If not on a letter, start dragging center
+        draggingCenter = true
+        centerX = p.mouseX
+        centerY = p.mouseY
+        console.log(`🎯 Dragging center`)
+    }
+
+    p.mouseDragged = () => {
+        if (draggedLetter) {
+            // Update position
+            draggedLetter.pos.set(p.mouseX, p.mouseY)
+
+            // Calculate velocity for throwing
+            const currentMousePos = p.createVector(p.mouseX, p.mouseY)
+            if (prevMousePos) {
+                const velocity = p5.Vector.sub(currentMousePos, prevMousePos)
+                draggedLetter.vel = velocity.copy()
+            }
+            prevMousePos = currentMousePos.copy()
+        } else if (draggingCenter) {
+            // Update center position while dragging
+            centerX = p.mouseX
+            centerY = p.mouseY
+        }
+    }
+
+    p.mouseReleased = () => {
+        if (draggedLetter) {
+            draggedLetter.dragging = false // No longer being dragged
+            console.log(`🎾 Threw letter with velocity: ${draggedLetter.vel.mag().toFixed(2)}`)
+            draggedLetter = null
+        } else if (draggingCenter) {
+            // Stop dragging center, but keep it at current position
+            draggingCenter = false
+            console.log(`🎯 Center set to (${centerX.toFixed(0)}, ${centerY.toFixed(0)})`)
+        }
+        prevMousePos = null
+    }
+
+    p.keyPressed = () => {
+        // Disable gravity while holding spacebar
+        if (p.key === ' ') {
+            gravityDisabled = true
+            console.log('🚀 Gravity disabled')
+        }
+    }
+
+    p.keyReleased = () => {
+        // Re-enable gravity when spacebar is released
+        if (p.key === ' ') {
+            gravityDisabled = false
+            console.log('🌍 Gravity enabled')
+        }
+    }
+
+
     // Form a word by recruiting letters
     function formWord(word, direction = null) {
         word = word.toUpperCase()
-        const formation = new WordFormation(word, p)
+        const formation = new WordFormation(word, p, centerX, centerY)
 
         // Override direction if provided (for burst spacing)
         if (direction !== null) {
@@ -712,36 +802,23 @@ const sketch = (p) => {
 new p5(sketch, 'canvas-container')
 
 async function init() {
-    const statusEl = document.getElementById('status')
     const manager = window.oceanStream.streamManager
-
-    statusEl.textContent = 'loading prompts...'
 
     const loaded = await manager.loadPrompts()
     if (!loaded) return
-
-    statusEl.textContent = 'checking model...'
 
     try {
         const models = await ollama.list()
         const hasModel = models.models.some(m => m.name.includes('tinydolphin'))
 
         if (!hasModel) {
-            statusEl.textContent = 'downloading tinydolphin...'
-            const response = await ollama.pull({ model: 'tinydolphin', stream: true })
-            for await (const part of response) {
-                if (part.status) {
-                    statusEl.textContent = part.status
-                }
-            }
+            await ollama.pull({ model: 'tinydolphin', stream: true })
         }
 
-        statusEl.textContent = 'ready'
         manager.generate()
 
     } catch (error) {
         console.error('Initialization error:', error)
-        statusEl.textContent = 'Error: Is Ollama running?'
     }
 }
 
