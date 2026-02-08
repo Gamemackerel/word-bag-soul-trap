@@ -31,6 +31,7 @@ const PATH_MAX_DISTANCE = 1000
 const PATH_SPEED = 0.0005
 const MAX_LETTER_SPEED = 3 // Target cruise speed for letters
 const SPEED_DECELERATION = 0.3 // Deceleration rate when exceeding max speed
+const LETTER_COUNT = 500 // Number of letter particles in the ocean
 
 // Path Curve - Consistent gentle curve for all words
 const PATH_CURVE_AMOUNT = 0.2  // Curve amount in radians
@@ -337,7 +338,7 @@ class Letter {
         this.p.fill(0, this.alpha)
         this.p.textSize(this.size)
         this.p.textAlign(this.p.CENTER, this.p.CENTER)
-        // Font is set once in setup() for performance
+        // Font is set once per frame in draw() before push/pop
         this.p.text(this.char, 0, 0)
         this.p.pop()
     }
@@ -645,7 +646,7 @@ const sketch = (p) => {
         centerY = p.height / 2
 
         // Initialize ocean with letters (doubled for richer letter pool)
-        for (let i = 0; i < 400; i++) {
+        for (let i = 0; i < LETTER_COUNT; i++) {
             const char = alphabet[Math.floor(Math.random() * alphabet.length)]
             const x = p.random(p.width)
             const y = p.random(p.height)
@@ -657,6 +658,7 @@ const sketch = (p) => {
 
     p.draw = () => {
         p.background(255)
+        p.textFont('Courier New, monospace')  // Set once per frame, persists through push/pop
 
         // Rotate global word spawn direction
         currentWordDirection += WORD_ROTATION_SPEED
