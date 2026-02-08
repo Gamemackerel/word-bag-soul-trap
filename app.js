@@ -35,6 +35,115 @@ const SPEED_DECELERATION = 0.3 // Deceleration rate when exceeding max speed
 // Path Curve - Consistent gentle curve for all words
 const PATH_CURVE_AMOUNT = 0.2  // Curve amount in radians
 
+// Quadtree configuration
+const QUADTREE_CAPACITY = 8  // Max items per node before subdivision
+
+// ============================================================================
+// QUADTREE - Spatial partitioning for efficient neighbor queries
+// ============================================================================
+
+class Rectangle {
+    constructor(x, y, w, h) {
+        this.x = x      // Center x
+        this.y = y      // Center y
+        this.w = w      // Half width
+        this.h = h      // Half height
+    }
+
+    contains(point) {
+        return (
+            point.pos.x >= this.x - this.w &&
+            point.pos.x < this.x + this.w &&
+            point.pos.y >= this.y - this.h &&
+            point.pos.y < this.y + this.h
+        )
+    }
+
+    intersects(range) {
+        return !(
+            range.x - range.w > this.x + this.w ||
+            range.x + range.w < this.x - this.w ||
+            range.y - range.h > this.y + this.h ||
+            range.y + range.h < this.y - this.h
+        )
+    }
+}
+
+class Quadtree {
+    constructor(boundary) {
+        this.boundary = boundary
+        this.points = []
+        this.divided = false
+        this.northeast = null
+        this.northwest = null
+        this.southeast = null
+        this.southwest = null
+    }
+
+    subdivide() {
+        const x = this.boundary.x
+        const y = this.boundary.y
+        const w = this.boundary.w / 2
+        const h = this.boundary.h / 2
+
+        this.northeast = new Quadtree(new Rectangle(x + w, y - h, w, h))
+        this.northwest = new Quadtree(new Rectangle(x - w, y - h, w, h))
+        this.southeast = new Quadtree(new Rectangle(x + w, y + h, w, h))
+        this.southwest = new Quadtree(new Rectangle(x - w, y + h, w, h))
+        this.divided = true
+    }
+
+    insert(point) {
+        if (!this.boundary.contains(point)) {
+            return false
+        }
+
+        if (this.points.length < QUADTREE_CAPACITY && !this.divided) {
+            this.points.push(point)
+            return true
+        }
+
+        if (!this.divided) {
+            this.subdivide()
+            // Re-insert existing points into children
+            for (const p of this.points) {
+                this.northeast.insert(p) ||
+                this.northwest.insert(p) ||
+                this.southeast.insert(p) ||
+                this.southwest.insert(p)
+            }
+            this.points = []
+        }
+
+        return (
+            this.northeast.insert(point) ||
+            this.northwest.insert(point) ||
+            this.southeast.insert(point) ||
+            this.southwest.insert(point)
+        )
+    }
+
+    query(range, found = []) {
+        if (!this.boundary.intersects(range)) {
+            return found
+        }
+
+        for (const p of this.points) {
+            if (range.contains(p)) {
+                found.push(p)
+            }
+        }
+
+        if (this.divided) {
+            this.northeast.query(range, found)
+            this.northwest.query(range, found)
+            this.southeast.query(range, found)
+            this.southwest.query(range, found)
+        }
+
+        return found
+    }
+}
 
 // ============================================================================
 // LETTER CLASS - Physics-based letter particle
@@ -83,15 +192,23 @@ class Letter {
     }
 
     // Combined repulsion + attraction in single loop using squared distances
-    applyNeighborForces(others) {
+    // Use quadtree to find nearby particles efficiently
+    applyNeighborForces(quadtree) {
         if (this.dragging) return
+
+        // Query quadtree for particles within attraction range (the larger range)
+        const queryRange = new Rectangle(
+            this.pos.x, this.pos.y,
+            ATTRACTION_MAX, ATTRACTION_MAX
+        )
+        const neighbors = quadtree.query(queryRange)
 
         let repulsionForce = this.p.createVector(0, 0)
         let attractionForce = this.p.createVector(0, 0)
         let repulsionCount = 0
         let attractionCount = 0
 
-        for (const other of others) {
+        for (const other of neighbors) {
             if (other === this) continue
 
             // Calculate squared distance first (no sqrt)
@@ -566,9 +683,16 @@ const sketch = (p) => {
             }
         }
 
+        // Build quadtree for spatial partitioning
+        const boundary = new Rectangle(p.width / 2, p.height / 2, p.width / 2, p.height / 2)
+        const quadtree = new Quadtree(boundary)
+        for (const letter of letters) {
+            quadtree.insert(letter)
+        }
+
         // Apply forces to letters
         for (const letter of letters) {
-            letter.applyNeighborForces(letters)
+            letter.applyNeighborForces(quadtree)
 
             // Only apply gravity if not disabled
             if (!gravityDisabled) {
