@@ -15,9 +15,12 @@ const MAX_SENTENCE_BUFFER = 50 // Max sentences to buffer (~500 words at 10 word
 
 // Ocean Physics Constants
 const REPULSION_RADIUS = 20
+const REPULSION_RADIUS_SQ = REPULSION_RADIUS * REPULSION_RADIUS
 const REPULSION_STRENGTH = 10.0
 const ATTRACTION_MIN = 50
+const ATTRACTION_MIN_SQ = ATTRACTION_MIN * ATTRACTION_MIN
 const ATTRACTION_MAX = 150
+const ATTRACTION_MAX_SQ = ATTRACTION_MAX * ATTRACTION_MAX
 const ATTRACTION_STRENGTH = 0.05
 const GRAVITY_STRENGTH = 0.07
 const COLLISION_SPEED_THRESHOLD = 0.2
@@ -79,75 +82,68 @@ class Letter {
         this.angularAcc += torque / this.momentOfInertia
     }
 
-    repel(others) {
+    // Combined repulsion + attraction in single loop using squared distances
+    applyNeighborForces(others) {
         if (this.dragging) return
 
         let repulsionForce = this.p.createVector(0, 0)
-        let count = 0
+        let attractionForce = this.p.createVector(0, 0)
+        let repulsionCount = 0
+        let attractionCount = 0
 
         for (const other of others) {
             if (other === this) continue
 
-            const diff = p5.Vector.sub(this.pos, other.pos)
-            const d = diff.mag()
+            // Calculate squared distance first (no sqrt)
+            const dx = this.pos.x - other.pos.x
+            const dy = this.pos.y - other.pos.y
+            const dSq = dx * dx + dy * dy
 
-            if (d > 0 && d < REPULSION_RADIUS) {
-                const normal = diff.copy().normalize()
+            // Repulsion check (close range)
+            if (dSq > 0 && dSq < REPULSION_RADIUS_SQ) {
+                const d = Math.sqrt(dSq)  // Only compute sqrt when needed
                 const forceMag = REPULSION_STRENGTH / d
-                repulsionForce.add(normal.copy().mult(forceMag))
+                // Normalize by dividing by d
+                repulsionForce.x += (dx / d) * forceMag
+                repulsionForce.y += (dy / d) * forceMag
 
                 // Apply collision torque
-                const relativeVel = p5.Vector.sub(this.vel, other.vel)
-                const impactSpeed = relativeVel.mag()
+                const relVelX = this.vel.x - other.vel.x
+                const relVelY = this.vel.y - other.vel.y
+                const impactSpeedSq = relVelX * relVelX + relVelY * relVelY
 
-                if (impactSpeed > COLLISION_SPEED_THRESHOLD) {
+                if (impactSpeedSq > COLLISION_SPEED_THRESHOLD * COLLISION_SPEED_THRESHOLD) {
+                    const impactSpeed = Math.sqrt(impactSpeedSq)
                     const spinDiff = other.angularVel - this.angularVel
 
-                    // Spin transfer: angular momentum exchange
-                    // High spin hitting low spin → transfer spin toward equalization
-                    // Opposite spins → strong mutual effect (large spinDiff)
                     const transferFactor = impactSpeed * 0.12
                     const spinTransfer = spinDiff * transferFactor
-
-                    // Base random spin from impact - always present, scales with collision speed
                     const impactRandomSpin = (Math.random() - 0.5) * impactSpeed * COLLISION_SPIN_FACTOR * 1.5
-
-                    // Extra random perturbation when spins are similar
                     const spinSimilarity = 1.0 / (1.0 + Math.abs(spinDiff) * 5)
                     const similarityBonus = (Math.random() - 0.5) * impactSpeed * COLLISION_SPIN_FACTOR * spinSimilarity
 
                     this.applyTorque(spinTransfer + impactRandomSpin + similarityBonus)
                 }
 
-                count++
+                repulsionCount++
+            }
+            // Attraction check (medium range) - note: uses opposite direction
+            else if (dSq > ATTRACTION_MIN_SQ && dSq < ATTRACTION_MAX_SQ) {
+                const d = Math.sqrt(dSq)
+                // Attraction goes toward other (negative dx/dy direction)
+                attractionForce.x += (-dx / d) * ATTRACTION_STRENGTH
+                attractionForce.y += (-dy / d) * ATTRACTION_STRENGTH
+                attractionCount++
             }
         }
 
-        if (count > 0) {
-            this.applyForce(repulsionForce.div(count))
+        if (repulsionCount > 0) {
+            repulsionForce.div(repulsionCount)
+            this.applyForce(repulsionForce)
         }
-    }
-
-    attract(others) {
-        if (this.dragging) return
-
-        let attractionForce = this.p.createVector(0, 0)
-        let count = 0
-
-        for (const other of others) {
-            if (other === this) continue
-
-            const d = p5.Vector.dist(this.pos, other.pos)
-
-            if (d > ATTRACTION_MIN && d < ATTRACTION_MAX) {
-                const diff = p5.Vector.sub(other.pos, this.pos)
-                attractionForce.add(diff.normalize().mult(ATTRACTION_STRENGTH))
-                count++
-            }
-        }
-
-        if (count > 0) {
-            this.applyForce(attractionForce.div(count))
+        if (attractionCount > 0) {
+            attractionForce.div(attractionCount)
+            this.applyForce(attractionForce)
         }
     }
 
@@ -572,8 +568,7 @@ const sketch = (p) => {
 
         // Apply forces to letters
         for (const letter of letters) {
-            letter.repel(letters)
-            letter.attract(letters)
+            letter.applyNeighborForces(letters)
 
             // Only apply gravity if not disabled
             if (!gravityDisabled) {
