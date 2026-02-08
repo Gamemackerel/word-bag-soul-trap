@@ -51,6 +51,7 @@ class Letter {
         this.vel = p.createVector(p.random(-0.5, 0.5), p.random(-0.5, 0.5))
         this.acc = p.createVector(0, 0)
         this.maxSpeed = MAX_LETTER_SPEED
+        this.maxSpeedSq = MAX_LETTER_SPEED * MAX_LETTER_SPEED  // Cached for perf
         this.maxForce = 0.2
         this.mass = 1
 
@@ -192,10 +193,11 @@ class Letter {
         if (!this.dragging) {
             this.vel.add(this.acc)
 
-            // Soft speed limit - allow exceeding max speed but gradually decelerate
-            const currentSpeed = this.vel.mag()
-            if (currentSpeed > this.maxSpeed) {
-                // Gradually decelerate toward maxSpeed
+            // Soft speed limit - use squared magnitude to avoid sqrt
+            const currentSpeedSq = this.vel.magSq()
+            if (currentSpeedSq > this.maxSpeedSq) {
+                // Only compute actual speed when we need to modify velocity
+                const currentSpeed = Math.sqrt(currentSpeedSq)
                 const excess = currentSpeed - this.maxSpeed
                 const newSpeed = currentSpeed - excess * SPEED_DECELERATION
                 this.vel.setMag(newSpeed)
@@ -222,7 +224,7 @@ class Letter {
         this.p.fill(0, this.alpha)
         this.p.textSize(this.size)
         this.p.textAlign(this.p.CENTER, this.p.CENTER)
-        this.p.textFont('Courier New, monospace')
+        // Font is set once in setup() for performance
         this.p.text(this.char, 0, 0)
         this.p.pop()
     }
@@ -304,16 +306,17 @@ class WordFormation {
         const wordWidth = this.word.length * letterSpacing
         const startX = -wordWidth / 2
 
+        // Cache sin/cos once per word instead of per letter
+        const cos = Math.cos(this.currentOrientation)
+        const sin = Math.sin(this.currentOrientation)
+
         for (let i = 0; i < this.letters.length; i++) {
             const letter = this.letters[i]
             if (letter.recruited && letter.targetIndex !== -1) {
                 const localX = startX + letter.targetIndex * letterSpacing
-                const localY = 0
-
-                const cos = Math.cos(this.currentOrientation)
-                const sin = Math.sin(this.currentOrientation)
-                const rotatedX = localX * cos - localY * sin
-                const rotatedY = localX * sin + localY * cos
+                // localY is always 0, so we can simplify the rotation
+                const rotatedX = localX * cos
+                const rotatedY = localX * sin
 
                 letter.targetPos = p5.Vector.add(this.pos, this.p.createVector(rotatedX, rotatedY))
             }
@@ -520,6 +523,9 @@ const sketch = (p) => {
 
     p.setup = () => {
         p.createCanvas(p.windowWidth, p.windowHeight)
+
+        // Set font once for all text rendering (performance optimization)
+        p.textFont('Courier New, monospace')
 
         // Initialize center to screen center
         centerX = p.width / 2
