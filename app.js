@@ -20,8 +20,8 @@ const ATTRACTION_MIN = 50
 const ATTRACTION_MAX = 150
 const ATTRACTION_STRENGTH = 0.05
 const GRAVITY_STRENGTH = 0.07
-const COLLISION_SPEED_THRESHOLD = 0.5
-const COLLISION_SPIN_FACTOR = 0.08
+const COLLISION_SPEED_THRESHOLD = 0.2
+const COLLISION_SPIN_FACTOR = 1
 const SPIN_NOISE = 0.003
 const WORD_ROTATION_SPEED = 0.001
 const PATH_MAX_DISTANCE = 1000
@@ -100,12 +100,22 @@ class Letter {
                 const impactSpeed = relativeVel.mag()
 
                 if (impactSpeed > COLLISION_SPEED_THRESHOLD) {
-                    const tangent = this.p.createVector(-normal.y, normal.x)
-                    const tangentVel = relativeVel.dot(tangent)
-                    const collisionTorque = tangentVel * impactSpeed * COLLISION_SPIN_FACTOR
-                    const spinDifference = other.angularVel - this.angularVel
-                    const spinExchange = spinDifference * impactSpeed * 0.05
-                    this.applyTorque(collisionTorque + spinExchange)
+                    const spinDiff = other.angularVel - this.angularVel
+
+                    // Spin transfer: angular momentum exchange
+                    // High spin hitting low spin → transfer spin toward equalization
+                    // Opposite spins → strong mutual effect (large spinDiff)
+                    const transferFactor = impactSpeed * 0.12
+                    const spinTransfer = spinDiff * transferFactor
+
+                    // Base random spin from impact - always present, scales with collision speed
+                    const impactRandomSpin = (Math.random() - 0.5) * impactSpeed * COLLISION_SPIN_FACTOR * 1.5
+
+                    // Extra random perturbation when spins are similar
+                    const spinSimilarity = 1.0 / (1.0 + Math.abs(spinDiff) * 5)
+                    const similarityBonus = (Math.random() - 0.5) * impactSpeed * COLLISION_SPIN_FACTOR * spinSimilarity
+
+                    this.applyTorque(spinTransfer + impactRandomSpin + similarityBonus)
                 }
 
                 count++
