@@ -638,9 +638,6 @@ const sketch = (p) => {
     p.setup = () => {
         p.createCanvas(p.windowWidth, p.windowHeight)
 
-        // Set font once for all text rendering (performance optimization)
-        p.textFont('Courier New, monospace')
-
         // Initialize center to screen center
         centerX = p.width / 2
         centerY = p.height / 2
@@ -658,8 +655,6 @@ const sketch = (p) => {
 
     p.draw = () => {
         p.background(255)
-        p.textFont('Courier New, monospace')  // Set once per frame, persists through push/pop
-
         // Rotate global word spawn direction
         currentWordDirection += WORD_ROTATION_SPEED
 
