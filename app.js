@@ -180,7 +180,12 @@ class Letter {
         this.targetPos = null
         this.targetIndex = -1
         this.wordId = null
+        this.word = null  // Direct reference to WordFormation for orientation lookup
         this.dragging = false
+
+        // Pre-allocated vectors for physics calculations (reused each frame)
+        this._repulsionForce = p.createVector(0, 0)
+        this._attractionForce = p.createVector(0, 0)
     }
 
     applyForce(force) {
@@ -204,8 +209,9 @@ class Letter {
         )
         const neighbors = quadtree.query(queryRange)
 
-        let repulsionForce = this.p.createVector(0, 0)
-        let attractionForce = this.p.createVector(0, 0)
+        // Reuse pre-allocated vectors (reset to zero)
+        const repulsionForce = this._repulsionForce.set(0, 0)
+        const attractionForce = this._attractionForce.set(0, 0)
         let repulsionCount = 0
         let attractionCount = 0
 
@@ -268,12 +274,16 @@ class Letter {
     gravitate(centerX, centerY) {
         if (this.dragging) return
 
-        const center = this.p.createVector(centerX, centerY)
-        const toCenter = p5.Vector.sub(center, this.pos)
-        const distance = toCenter.mag()
+        // Inline math to avoid vector allocations
+        const dx = centerX - this.pos.x
+        const dy = centerY - this.pos.y
+        const distSq = dx * dx + dy * dy
 
-        if (distance > 0) {
-            this.applyForce(toCenter.normalize().mult(GRAVITY_STRENGTH))
+        if (distSq > 0) {
+            const dist = Math.sqrt(distSq)
+            // Normalize and apply gravity strength (mass is 1, so skip division)
+            this.acc.x += (dx / dist) * GRAVITY_STRENGTH
+            this.acc.y += (dy / dist) * GRAVITY_STRENGTH
         }
     }
 
@@ -443,6 +453,7 @@ class WordFormation {
         for (const letter of this.letters) {
             letter.recruited = false
             letter.wordId = null
+            letter.word = null
             letter.targetPos = null
             letter.targetIndex = -1
             letter.vel.mult(0.3)
@@ -626,10 +637,18 @@ const sketch = (p) => {
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     const streamManager = new StreamManager()
 
+    // Character index for O(1) lookup by letter character
+    const lettersByChar = new Map()
+
     // Center position (can be moved by clicking/dragging)
     let centerX = 0
     let centerY = 0
     let draggingCenter = false
+
+    // Quadtree caching - rebuild every N frames instead of every frame
+    const QUADTREE_REBUILD_INTERVAL = 5
+    let quadtree = null
+    let framesSinceQuadtreeRebuild = 0
 
     // Interaction state
     let draggedLetter = null
@@ -642,12 +661,19 @@ const sketch = (p) => {
         centerX = p.width / 2
         centerY = p.height / 2
 
+        // Initialize character index
+        for (const char of alphabet) {
+            lettersByChar.set(char, [])
+        }
+
         // Initialize ocean with letters (doubled for richer letter pool)
         for (let i = 0; i < LETTER_COUNT; i++) {
             const char = alphabet[Math.floor(Math.random() * alphabet.length)]
             const x = p.random(p.width)
             const y = p.random(p.height)
-            letters.push(new Letter(char, x, y, p))
+            const letter = new Letter(char, x, y, p)
+            letters.push(letter)
+            lettersByChar.get(char).push(letter)
         }
 
         console.log('Ocean initialized with', letters.length, 'letters')
@@ -672,19 +698,15 @@ const sketch = (p) => {
             }
         }
 
-        // Build letter-to-direction map
-        const letterWordDirections = new Map()
-        for (const word of activeWords) {
-            for (const letter of word.letters) {
-                letterWordDirections.set(letter, word.currentOrientation)
+        // Build quadtree for spatial partitioning (only every N frames)
+        framesSinceQuadtreeRebuild++
+        if (quadtree === null || framesSinceQuadtreeRebuild >= QUADTREE_REBUILD_INTERVAL) {
+            const boundary = new Rectangle(p.width / 2, p.height / 2, p.width / 2, p.height / 2)
+            quadtree = new Quadtree(boundary)
+            for (const letter of letters) {
+                quadtree.insert(letter)
             }
-        }
-
-        // Build quadtree for spatial partitioning
-        const boundary = new Rectangle(p.width / 2, p.height / 2, p.width / 2, p.height / 2)
-        const quadtree = new Quadtree(boundary)
-        for (const letter of letters) {
-            quadtree.insert(letter)
+            framesSinceQuadtreeRebuild = 0
         }
 
         // Apply forces to letters
@@ -696,8 +718,8 @@ const sketch = (p) => {
                 letter.gravitate(centerX, centerY)
             }
 
-            const wordDirection = letterWordDirections.get(letter) || null
-            letter.swim(wordDirection)
+            // Use direct word reference instead of Map lookup
+            letter.swim(letter.word?.currentOrientation ?? null)
         }
 
         // Update and display letters
@@ -899,27 +921,44 @@ const sketch = (p) => {
             formation.currentOrientation = direction
         }
 
+        const formX = formation.pos.x
+        const formY = formation.pos.y
+
         for (let i = 0; i < word.length; i++) {
             const char = word[i]
 
-            const availableLetters = letters.filter(l => l.char === char && !l.recruited)
-
-            if (availableLetters.length === 0) {
+            // Use character index for O(1) lookup instead of filtering all letters
+            const charLetters = lettersByChar.get(char)
+            if (!charLetters) {
                 console.warn(`No available letter "${char}"`)
                 continue
             }
 
-            availableLetters.sort((a, b) => {
-                const distA = p5.Vector.dist(a.pos, formation.pos)
-                const distB = p5.Vector.dist(b.pos, formation.pos)
-                return distA - distB
-            })
+            // Find closest unrequited letter using squared distance (no vector allocations)
+            let closestLetter = null
+            let closestDistSq = Infinity
 
-            const letter = availableLetters[0]
-            letter.recruited = true
-            letter.wordId = formation.id
-            letter.targetIndex = i
-            formation.letters.push(letter)
+            for (const letter of charLetters) {
+                if (letter.recruited) continue
+                const dx = letter.pos.x - formX
+                const dy = letter.pos.y - formY
+                const distSq = dx * dx + dy * dy
+                if (distSq < closestDistSq) {
+                    closestDistSq = distSq
+                    closestLetter = letter
+                }
+            }
+
+            if (closestLetter === null) {
+                console.warn(`No available letter "${char}"`)
+                continue
+            }
+
+            closestLetter.recruited = true
+            closestLetter.wordId = formation.id
+            closestLetter.word = formation  // Store reference for direct orientation lookup
+            closestLetter.targetIndex = i
+            formation.letters.push(closestLetter)
         }
 
         formation.updateTargetPositions()
