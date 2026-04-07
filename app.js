@@ -723,6 +723,7 @@ const sketch = (p) => {
         }
 
         // Update and display letters
+        p.textFont('Courier New')
         for (const letter of letters) {
             letter.update()
             letter.display()
@@ -893,11 +894,49 @@ const sketch = (p) => {
         prevMousePos = null
     }
 
+    function captureAsSVG() {
+        const w = p.width
+        const h = p.height
+        const lines = [
+            `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`,
+            `<rect width="${w}" height="${h}" fill="white"/>`,
+        ]
+
+        for (const letter of letters) {
+            const x = letter.pos.x.toFixed(2)
+            const y = letter.pos.y.toFixed(2)
+            const deg = (letter.angle * 180 / Math.PI).toFixed(2)
+            const opacity = (letter.alpha / 255).toFixed(3)
+            const escaped = letter.char
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+            lines.push(
+                `<text transform="translate(${x},${y}) rotate(${deg})" ` +
+                `text-anchor="middle" dominant-baseline="middle" ` +
+                `font-family="'Courier New', Courier, monospace" font-size="${letter.size}" opacity="${opacity}">${escaped}</text>`
+            )
+        }
+
+        lines.push('</svg>')
+        const blob = new Blob([lines.join('\n')], { type: 'image/svg+xml' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `word-bag-${Date.now()}.svg`
+        a.click()
+        URL.revokeObjectURL(url)
+        console.log(`Captured ${letters.length} letters as SVG`)
+    }
+
     p.keyPressed = () => {
         // Disable gravity while holding spacebar
         if (p.key === ' ') {
             gravityDisabled = true
             console.log('🚀 Gravity disabled')
+        }
+        if (p.key === 's' || p.key === 'S') {
+            captureAsSVG()
         }
     }
 
