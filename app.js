@@ -620,6 +620,15 @@ const sketch = (p) => {
     let letters = []
     let activeWords = []
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    // Scrabble tile counts — expanded proportionally for the pool
+    const LETTER_DISTRIBUTION = {
+        A:9, B:2, C:2, D:4, E:12, F:2, G:3, H:2, I:9, J:1, K:1, L:4,
+        M:2, N:6, O:8, P:2, Q:1, R:6, S:4, T:6, U:4, V:2, W:2, X:1,
+        Y:2, Z:1
+    }
+    // Build a weighted pool string to sample from
+    const letterPool = Object.entries(LETTER_DISTRIBUTION)
+        .flatMap(([ch, count]) => Array(count).fill(ch))
     const streamManager = new StreamManager()
 
     // Character index for O(1) lookup by letter character
@@ -653,7 +662,7 @@ const sketch = (p) => {
 
         // Initialize ocean with letters (doubled for richer letter pool)
         for (let i = 0; i < LETTER_COUNT; i++) {
-            const char = alphabet[Math.floor(Math.random() * alphabet.length)]
+            const char = letterPool[Math.floor(Math.random() * letterPool.length)]
             const x = p.random(p.width)
             const y = p.random(p.height)
             const letter = new Letter(char, x, y, p)
@@ -946,21 +955,23 @@ const sketch = (p) => {
         const kickX = Math.cos(dir) * MAX_LETTER_SPEED * 0.6
         const kickY = Math.sin(dir) * MAX_LETTER_SPEED * 0.6
 
-        const recruited = []
+        // Anchor: start from center, then chain each letter to the previous one
+        let anchorX = centerX
+        let anchorY = centerY
 
         for (let i = 0; i < word.length; i++) {
             const char = word[i]
             const charLetters = lettersByChar.get(char)
             if (!charLetters) continue
 
-            // Find the closest free letter
+            // Find the free letter closest to the current anchor
             let closest = null
             let closestDSq = Infinity
 
             for (const lt of charLetters) {
                 if (lt.recruited) continue
-                const dx = lt.pos.x - centerX
-                const dy = lt.pos.y - centerY
+                const dx = lt.pos.x - anchorX
+                const dy = lt.pos.y - anchorY
                 const dSq = dx * dx + dy * dy
                 if (dSq < closestDSq) {
                     closestDSq = dSq
@@ -973,12 +984,14 @@ const sketch = (p) => {
             closest.recruited = true
             closest.wordGroup = formation
             closest.wordIndex = i
-            // Give an initial velocity kick toward word direction
             closest.vel.x = kickX + (Math.random() - 0.5) * 0.5
             closest.vel.y = kickY + (Math.random() - 0.5) * 0.5
 
             formation.letters.push(closest)
-            recruited.push(closest)
+
+            // Next letter anchors to this one
+            anchorX = closest.pos.x
+            anchorY = closest.pos.y
         }
 
         // Wire up left/right bonds in word order (by wordIndex)
