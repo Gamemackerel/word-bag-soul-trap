@@ -26,9 +26,11 @@ const BOIDS_COHESION_STRENGTH = 0.006
 
 // Word bonding — physics-emergent word formation
 const WORD_LETTER_SPACING = 16     // Target center-to-center distance between bonded letters
-const WORD_ALIGN_STRENGTH = 0.35   // Force aligning word letters' velocity to word orientation
-const WORD_BOND_STRENGTH = 0.28    // Spring strength pulling letters to correct relative position
-const WORD_FORMING_DURATION = 2800 // ms to ramp bond strength to full
+const WORD_ALIGN_STRENGTH = 0.12   // Force aligning word letters' velocity to word orientation
+const WORD_BOND_STRENGTH = 0.08    // Spring strength pulling letters to correct relative position
+const WORD_REPULSION_RADIUS = 160  // How far word letters push free letters away (and vice versa)
+const WORD_REPULSION_RADIUS_SQ = WORD_REPULSION_RADIUS * WORD_REPULSION_RADIUS
+const WORD_REPULSION_STRENGTH = 14.0
 const WORD_LIFETIME = 14000        // ms before word dissolves back to flock
 
 // General physics
@@ -182,9 +184,9 @@ class Letter {
         this.recruited = false
         this.bondLeft = null    // Letter to my left in current word
         this.bondRight = null   // Letter to my right in current word
-        this.wordBondStartTime = 0
         this.wordGroup = null   // Reference to WordFormation
         this.wordIndex = -1
+        this.bondRamp = 0       // 0..1 bell curve set each frame by WordFormation
         this.dragging = false
     }
 
@@ -215,6 +217,15 @@ class Letter {
 
             if (dSq === 0) continue
 
+            // Repulsion between word-letters and free letters, scaled by bondRamp
+            const crossWord = this.bondRamp > 0 || other.bondRamp > 0
+            if (crossWord && this.wordGroup !== other.wordGroup && dSq < WORD_REPULSION_RADIUS_SQ) {
+                const repulse = Math.max(this.bondRamp, other.bondRamp) * WORD_REPULSION_STRENGTH
+                const d = Math.sqrt(dSq)
+                this.acc.x += (dx / d) * (repulse / d)
+                this.acc.y += (dy / d) * (repulse / d)
+            }
+
             if (dSq < BOIDS_SEPARATION_RADIUS_SQ) {
                 // Separation: push away, weighted by inverse distance
                 const d = Math.sqrt(dSq)
@@ -234,10 +245,11 @@ class Letter {
                 avgVelY += other.vel.y
                 alignCount++
             } else if (dSq < BOIDS_COHESION_RADIUS_SQ) {
-                // Cohesion: move toward average position
-                avgPosX += other.pos.x
-                avgPosY += other.pos.y
-                cohCount++
+                // Cohesion: weight neighbor by how unbound it is
+                const w = 1 - other.bondRamp
+                avgPosX += other.pos.x * w
+                avgPosY += other.pos.y * w
+                cohCount += w
             }
         }
 
@@ -252,8 +264,9 @@ class Letter {
             this.acc.y += dvy * BOIDS_ALIGNMENT_STRENGTH
         }
         if (cohCount > 0) {
-            this.acc.x += ((avgPosX / cohCount) - this.pos.x) * BOIDS_COHESION_STRENGTH
-            this.acc.y += ((avgPosY / cohCount) - this.pos.y) * BOIDS_COHESION_STRENGTH
+            const cohesion = BOIDS_COHESION_STRENGTH * (1 - this.bondRamp)
+            this.acc.x += ((avgPosX / cohCount) - this.pos.x) * cohesion
+            this.acc.y += ((avgPosY / cohCount) - this.pos.y) * cohesion
         }
     }
 
@@ -350,8 +363,9 @@ class WordFormation {
         if (this.launched || this.letters.length < 2) return
 
         const age = millis - this.startTime
-        // Ramp bond strength from 0 to full over WORD_FORMING_DURATION
-        const ramp = Math.min(1.0, age / WORD_FORMING_DURATION)
+        // Smooth bell: fade in over first 30% of lifetime, fade out over last 30%
+        const t = age / WORD_LIFETIME  // 0..1
+        const ramp = Math.sin(t * Math.PI)
         const bond = ramp * WORD_BOND_STRENGTH
 
         // Compute current word orientation from average velocity of letters
@@ -372,6 +386,7 @@ class WordFormation {
         for (let i = 0; i < this.letters.length; i++) {
             const lt = this.letters[i]
             if (!lt.recruited) continue
+            lt.bondRamp = ramp  // expose to boids cohesion scaling
 
             // ── Bond spring to left and right word-neighbors ──────────────────
             for (const [neighbor, side] of [[lt.bondLeft, -1], [lt.bondRight, 1]]) {
@@ -412,6 +427,7 @@ class WordFormation {
             lt.bondRight = null
             lt.wordGroup = null
             lt.wordIndex = -1
+            lt.bondRamp = 0
             lt.vel.mult(0.4)
         }
         this.launched = true
