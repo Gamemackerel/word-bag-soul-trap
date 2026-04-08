@@ -33,6 +33,10 @@ const WORD_REPULSION_RADIUS_SQ = WORD_REPULSION_RADIUS * WORD_REPULSION_RADIUS
 const WORD_REPULSION_STRENGTH = 14.0
 const WORD_LIFETIME = 14000        // ms before word dissolves back to flock
 
+// Soft boundary
+const BOUNDARY_MARGIN = 80   // Distance from edge where repulsion begins
+const BOUNDARY_STRENGTH = 0.8
+
 // General physics
 const GRAVITY_STRENGTH = 0
 const SPIN_NOISE = 0.003
@@ -268,6 +272,15 @@ class Letter {
             this.acc.x += ((avgPosX / cohCount) - this.pos.x) * cohesion
             this.acc.y += ((avgPosY / cohCount) - this.pos.y) * cohesion
         }
+    }
+
+    applyBoundaryForce(w, h) {
+        const m = BOUNDARY_MARGIN
+        const s = BOUNDARY_STRENGTH
+        if (this.pos.x < m)     this.acc.x += s * (1 - this.pos.x / m)
+        if (this.pos.x > w - m) this.acc.x -= s * (1 - (w - this.pos.x) / m)
+        if (this.pos.y < m)     this.acc.y += s * (1 - this.pos.y / m)
+        if (this.pos.y > h - m) this.acc.y -= s * (1 - (h - this.pos.y) / m)
     }
 
     gravitate(centerX, centerY) {
@@ -686,6 +699,7 @@ const sketch = (p) => {
         // Apply boids forces to all letters; gravity only to non-recruited
         for (const letter of letters) {
             letter.applyBoidsForces(quadtree)
+            letter.applyBoundaryForce(p.width, p.height)
 
             if (!letter.recruited && !gravityDisabled) {
                 letter.gravitate(centerX, centerY)
