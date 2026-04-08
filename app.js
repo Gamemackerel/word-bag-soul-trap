@@ -13,31 +13,34 @@ const MODEL_ID = 'SmolLM2-360M-Instruct-q4f16_1-MLC'
 const MAX_CONTEXT_LENGTH = 512
 const MAX_SENTENCE_BUFFER = 50 // Max sentences to buffer (~500 words at 10 words/sentence)
 
-// Ocean Physics Constants
-const REPULSION_RADIUS = 20
-const REPULSION_RADIUS_SQ = REPULSION_RADIUS * REPULSION_RADIUS
-const REPULSION_STRENGTH = 10.0
-const ATTRACTION_MIN = 50
-const ATTRACTION_MIN_SQ = ATTRACTION_MIN * ATTRACTION_MIN
-const ATTRACTION_MAX = 150
-const ATTRACTION_MAX_SQ = ATTRACTION_MAX * ATTRACTION_MAX
-const ATTRACTION_STRENGTH = 0.05
-const GRAVITY_STRENGTH = 0.05
-const COLLISION_SPEED_THRESHOLD = 0.2
-const COLLISION_SPIN_FACTOR = 1
-const SPIN_NOISE = 0.003
-const WORD_ROTATION_SPEED = 0.001
-const PATH_MAX_DISTANCE = 1000
-const PATH_SPEED = 0.0005
-const MAX_LETTER_SPEED = 3 // Target cruise speed for letters
-const SPEED_DECELERATION = 0.3 // Deceleration rate when exceeding max speed
-const LETTER_COUNT = 500 // Number of letter particles in the ocean
+// Boids flocking constants
+const BOIDS_SEPARATION_RADIUS = 28
+const BOIDS_SEPARATION_RADIUS_SQ = BOIDS_SEPARATION_RADIUS * BOIDS_SEPARATION_RADIUS
+const BOIDS_SEPARATION_STRENGTH = 2.5
+const BOIDS_ALIGNMENT_RADIUS = 80
+const BOIDS_ALIGNMENT_RADIUS_SQ = BOIDS_ALIGNMENT_RADIUS * BOIDS_ALIGNMENT_RADIUS
+const BOIDS_ALIGNMENT_STRENGTH = 0.05
+const BOIDS_COHESION_RADIUS = 120
+const BOIDS_COHESION_RADIUS_SQ = BOIDS_COHESION_RADIUS * BOIDS_COHESION_RADIUS
+const BOIDS_COHESION_STRENGTH = 0.006
 
-// Path Curve - Consistent gentle curve for all words
-const PATH_CURVE_AMOUNT = 0.2  // Curve amount in radians
+// Word bonding — physics-emergent word formation
+const WORD_LETTER_SPACING = 16     // Target center-to-center distance between bonded letters
+const WORD_ALIGN_STRENGTH = 0.35   // Force aligning word letters' velocity to word orientation
+const WORD_BOND_STRENGTH = 0.28    // Spring strength pulling letters to correct relative position
+const WORD_FORMING_DURATION = 2800 // ms to ramp bond strength to full
+const WORD_LIFETIME = 14000        // ms before word dissolves back to flock
+
+// General physics
+const GRAVITY_STRENGTH = 0
+const SPIN_NOISE = 0.003
+const WORD_ROTATION_SPEED = 0.001  // Global word emission direction drift
+const MAX_LETTER_SPEED = 3
+const SPEED_DECELERATION = 0.3
+const LETTER_COUNT = 500
 
 // Quadtree configuration
-const QUADTREE_CAPACITY = 8  // Max items per node before subdivision
+const QUADTREE_CAPACITY = 8
 
 // ============================================================================
 // QUADTREE - Spatial partitioning for efficient neighbor queries
@@ -175,99 +178,82 @@ class Letter {
         this.radius = this.size / 2
         this.momentOfInertia = this.mass * this.radius * this.radius
 
-        // Word formation state
+        // Word bond state
         this.recruited = false
-        this.targetPos = null
-        this.targetIndex = -1
-        this.wordId = null
-        this.word = null  // Direct reference to WordFormation for orientation lookup
+        this.bondLeft = null    // Letter to my left in current word
+        this.bondRight = null   // Letter to my right in current word
+        this.wordBondStartTime = 0
+        this.wordGroup = null   // Reference to WordFormation
+        this.wordIndex = -1
         this.dragging = false
-
-        // Pre-allocated vectors for physics calculations (reused each frame)
-        this._repulsionForce = p.createVector(0, 0)
-        this._attractionForce = p.createVector(0, 0)
-    }
-
-    applyForce(force) {
-        const f = force.copy().div(this.mass)
-        this.acc.add(f)
     }
 
     applyTorque(torque) {
         this.angularAcc += torque / this.momentOfInertia
     }
 
-    // Combined repulsion + attraction in single loop using squared distances
-    // Use quadtree to find nearby particles efficiently
-    applyNeighborForces(quadtree) {
+    // Boids: separation, alignment, cohesion using quadtree
+    applyBoidsForces(quadtree) {
         if (this.dragging) return
 
-        // Query quadtree for particles within attraction range (the larger range)
         const queryRange = new Rectangle(
             this.pos.x, this.pos.y,
-            ATTRACTION_MAX, ATTRACTION_MAX
+            BOIDS_COHESION_RADIUS, BOIDS_COHESION_RADIUS
         )
         const neighbors = quadtree.query(queryRange)
 
-        // Reuse pre-allocated vectors (reset to zero)
-        const repulsionForce = this._repulsionForce.set(0, 0)
-        const attractionForce = this._attractionForce.set(0, 0)
-        let repulsionCount = 0
-        let attractionCount = 0
+        let sepX = 0, sepY = 0, sepCount = 0
+        let avgVelX = 0, avgVelY = 0, alignCount = 0
+        let avgPosX = 0, avgPosY = 0, cohCount = 0
 
         for (const other of neighbors) {
             if (other === this) continue
 
-            // Calculate squared distance first (no sqrt)
             const dx = this.pos.x - other.pos.x
             const dy = this.pos.y - other.pos.y
             const dSq = dx * dx + dy * dy
 
-            // Repulsion check (close range)
-            if (dSq > 0 && dSq < REPULSION_RADIUS_SQ) {
-                const d = Math.sqrt(dSq)  // Only compute sqrt when needed
-                const forceMag = REPULSION_STRENGTH / d
-                // Normalize by dividing by d
-                repulsionForce.x += (dx / d) * forceMag
-                repulsionForce.y += (dy / d) * forceMag
+            if (dSq === 0) continue
 
-                // Apply collision torque
-                const relVelX = this.vel.x - other.vel.x
-                const relVelY = this.vel.y - other.vel.y
-                const impactSpeedSq = relVelX * relVelX + relVelY * relVelY
-
-                if (impactSpeedSq > COLLISION_SPEED_THRESHOLD * COLLISION_SPEED_THRESHOLD) {
-                    const impactSpeed = Math.sqrt(impactSpeedSq)
-                    const spinDiff = other.angularVel - this.angularVel
-
-                    const transferFactor = impactSpeed * 0.12
-                    const spinTransfer = spinDiff * transferFactor
-                    const impactRandomSpin = (Math.random() - 0.5) * impactSpeed * COLLISION_SPIN_FACTOR * 1.5
-                    const spinSimilarity = 1.0 / (1.0 + Math.abs(spinDiff) * 5)
-                    const similarityBonus = (Math.random() - 0.5) * impactSpeed * COLLISION_SPIN_FACTOR * spinSimilarity
-
-                    this.applyTorque(spinTransfer + impactRandomSpin + similarityBonus)
-                }
-
-                repulsionCount++
-            }
-            // Attraction check (medium range) - note: uses opposite direction
-            else if (dSq > ATTRACTION_MIN_SQ && dSq < ATTRACTION_MAX_SQ) {
+            if (dSq < BOIDS_SEPARATION_RADIUS_SQ) {
+                // Separation: push away, weighted by inverse distance
                 const d = Math.sqrt(dSq)
-                // Attraction goes toward other (negative dx/dy direction)
-                attractionForce.x += (-dx / d) * ATTRACTION_STRENGTH
-                attractionForce.y += (-dy / d) * ATTRACTION_STRENGTH
-                attractionCount++
+                sepX += (dx / d) / d  // weight by 1/d
+                sepY += (dy / d) / d
+                sepCount++
+
+                // Spin coupling on close pass
+                const impactSpeedSq = (this.vel.x - other.vel.x) ** 2 + (this.vel.y - other.vel.y) ** 2
+                if (impactSpeedSq > 0.04) {
+                    const spinDiff = other.angularVel - this.angularVel
+                    this.applyTorque(spinDiff * 0.08 + (Math.random() - 0.5) * 0.04)
+                }
+            } else if (dSq < BOIDS_ALIGNMENT_RADIUS_SQ) {
+                // Alignment: match velocity
+                avgVelX += other.vel.x
+                avgVelY += other.vel.y
+                alignCount++
+            } else if (dSq < BOIDS_COHESION_RADIUS_SQ) {
+                // Cohesion: move toward average position
+                avgPosX += other.pos.x
+                avgPosY += other.pos.y
+                cohCount++
             }
         }
 
-        if (repulsionCount > 0) {
-            repulsionForce.div(repulsionCount)
-            this.applyForce(repulsionForce)
+        if (sepCount > 0) {
+            this.acc.x += sepX * BOIDS_SEPARATION_STRENGTH
+            this.acc.y += sepY * BOIDS_SEPARATION_STRENGTH
         }
-        if (attractionCount > 0) {
-            attractionForce.div(attractionCount)
-            this.applyForce(attractionForce)
+        if (alignCount > 0) {
+            const dvx = (avgVelX / alignCount) - this.vel.x
+            const dvy = (avgVelY / alignCount) - this.vel.y
+            this.acc.x += dvx * BOIDS_ALIGNMENT_STRENGTH
+            this.acc.y += dvy * BOIDS_ALIGNMENT_STRENGTH
+        }
+        if (cohCount > 0) {
+            this.acc.x += ((avgPosX / cohCount) - this.pos.x) * BOIDS_COHESION_STRENGTH
+            this.acc.y += ((avgPosY / cohCount) - this.pos.y) * BOIDS_COHESION_STRENGTH
         }
     }
 
@@ -284,31 +270,6 @@ class Letter {
             // Normalize and apply gravity strength (mass is 1, so skip division)
             this.acc.x += (dx / dist) * GRAVITY_STRENGTH
             this.acc.y += (dy / dist) * GRAVITY_STRENGTH
-        }
-    }
-
-    swim(wordDirection = null) {
-        if (this.recruited && this.targetPos) {
-            const desired = p5.Vector.sub(this.targetPos, this.pos)
-            const d = desired.mag()
-
-            let speed = this.maxSpeed * 2
-            if (d < 100) {
-                speed = this.p.map(d, 0, 100, 0, speed)
-            }
-
-            desired.setMag(speed)
-            const steer = p5.Vector.sub(desired, this.vel).limit(this.maxForce * 4)
-            this.applyForce(steer)
-
-            // Align rotation with word direction
-            if (wordDirection !== null) {
-                let angleDiff = wordDirection - this.angle
-                while (angleDiff > this.p.PI) angleDiff -= this.p.TWO_PI
-                while (angleDiff < -this.p.PI) angleDiff += this.p.TWO_PI
-                this.applyTorque(angleDiff * 0.15)
-                this.angularVel *= 0.9
-            }
         }
     }
 
@@ -371,98 +332,93 @@ const BURST_WORD_DELAY = 2000 // 2 seconds between words in a burst
 const BURST_COOLDOWN = 30000 // 30 seconds between bursts
 
 class WordFormation {
-    constructor(word, p, startX = null, startY = null) {
+    constructor(word, p, millis, direction) {
         this.word = word.toUpperCase()
         this.id = nextWordId++
         this.letters = []
         this.p = p
-
-        const x = startX !== null ? startX : p.width / 2
-        const y = startY !== null ? startY : p.height / 2
-        this.pos = p.createVector(x, y)
-        this.centerX = x  // Center X for this word's trajectory
-        this.centerY = y  // Center Y for this word's trajectory
-        this.direction = currentWordDirection
-        this.pathProgress = 0
-        this.currentOrientation = this.direction
-        this.launched = false
-
-        // Consistent path characteristics - same curve for all words
-        this.curveAmount = PATH_CURVE_AMOUNT
-        this.curveDirection = 1  // Always curve in same direction
-        this.maxDistance = PATH_MAX_DISTANCE
+        this.startTime = millis
+        this.direction = direction  // initial travel direction
+        this.launched = false       // true once dissolved back to flock
+        // currentOrientation is computed each frame from letter velocities
+        this.currentOrientation = direction
     }
 
-    update() {
-        if (this.launched) return
+    // Apply physics-based bond forces to all letters in the word.
+    // Called once per frame from draw().
+    applyBondForces(millis) {
+        if (this.launched || this.letters.length < 2) return
 
-        this.pathProgress += PATH_SPEED
+        const age = millis - this.startTime
+        // Ramp bond strength from 0 to full over WORD_FORMING_DURATION
+        const ramp = Math.min(1.0, age / WORD_FORMING_DURATION)
+        const bond = ramp * WORD_BOND_STRENGTH
 
-        // Use the center position this word was created with
-        const centerX = this.centerX
-        const centerY = this.centerY
-
-        // Parametric curved path with subtle random variation
-        const t = this.pathProgress
-        const distanceFromCenter = Math.sin(t * Math.PI) * this.maxDistance
-
-        // Subtle curve that can go left or right
-        const angleOffset = t * Math.PI * this.curveAmount * this.curveDirection
-        const currentAngle = this.direction + angleOffset
-
-        this.pos.x = centerX + Math.cos(currentAngle) * distanceFromCenter
-        this.pos.y = centerY + Math.sin(currentAngle) * distanceFromCenter
-
-        // Calculate tangent direction for word orientation
-        const dr_dt = Math.PI * Math.cos(t * Math.PI) * this.maxDistance
-        const dtheta_dt = Math.PI * this.curveAmount * this.curveDirection
-        const r_dtheta = distanceFromCenter * dtheta_dt
-
-        const vx = dr_dt * Math.cos(currentAngle) - r_dtheta * Math.sin(currentAngle)
-        const vy = dr_dt * Math.sin(currentAngle) + r_dtheta * Math.cos(currentAngle)
-
-        this.currentOrientation = Math.atan2(vy, vx)
-        this.updateTargetPositions()
-    }
-
-    updateTargetPositions() {
-        const letterSpacing = 15  // 50% of original 30 for zoomed-out effect
-        const wordWidth = this.word.length * letterSpacing
-        const startX = -wordWidth / 2
-
-        // Cache sin/cos once per word instead of per letter
-        const cos = Math.cos(this.currentOrientation)
-        const sin = Math.sin(this.currentOrientation)
+        // Compute current word orientation from average velocity of letters
+        let avgVx = 0, avgVy = 0
+        for (const lt of this.letters) {
+            avgVx += lt.vel.x
+            avgVy += lt.vel.y
+        }
+        avgVx /= this.letters.length
+        avgVy /= this.letters.length
+        const mag = Math.sqrt(avgVx * avgVx + avgVy * avgVy)
+        if (mag > 0.01) {
+            this.currentOrientation = Math.atan2(avgVy, avgVx)
+        }
+        const fwdX = Math.cos(this.currentOrientation)
+        const fwdY = Math.sin(this.currentOrientation)
 
         for (let i = 0; i < this.letters.length; i++) {
-            const letter = this.letters[i]
-            if (letter.recruited && letter.targetIndex !== -1) {
-                const localX = startX + letter.targetIndex * letterSpacing
-                // localY is always 0, so we can simplify the rotation
-                const rotatedX = localX * cos
-                const rotatedY = localX * sin
+            const lt = this.letters[i]
+            if (!lt.recruited) continue
 
-                letter.targetPos = p5.Vector.add(this.pos, this.p.createVector(rotatedX, rotatedY))
+            // ── Bond spring to left and right word-neighbors ──────────────────
+            for (const [neighbor, side] of [[lt.bondLeft, -1], [lt.bondRight, 1]]) {
+                if (!neighbor || !neighbor.recruited) continue
+
+                const dx = neighbor.pos.x - lt.pos.x
+                const dy = neighbor.pos.y - lt.pos.y
+
+                // Target offset: WORD_LETTER_SPACING along the forward axis, on the correct side
+                const targetX = fwdX * WORD_LETTER_SPACING * side
+                const targetY = fwdY * WORD_LETTER_SPACING * side
+
+                // Spring: pull toward target offset (not just target distance)
+                const errX = (targetX - dx) * bond * 0.5
+                const errY = (targetY - dy) * bond * 0.5
+                lt.acc.x -= errX
+                lt.acc.y -= errY
+
+                // Velocity alignment with neighbor: match velocities
+                lt.acc.x += (neighbor.vel.x - lt.vel.x) * WORD_ALIGN_STRENGTH * ramp
+                lt.acc.y += (neighbor.vel.y - lt.vel.y) * WORD_ALIGN_STRENGTH * ramp
             }
+
+            // ── Angle alignment: letter faces word travel direction ────────────
+            let angleDiff = this.currentOrientation - lt.angle
+            while (angleDiff > Math.PI) angleDiff -= Math.PI * 2
+            while (angleDiff < -Math.PI) angleDiff += Math.PI * 2
+            lt.angularAcc += angleDiff * 0.1 * ramp
+            lt.angularVel *= 0.92
         }
     }
 
     dissolve() {
         if (this.launched) return
-
-        for (const letter of this.letters) {
-            letter.recruited = false
-            letter.wordId = null
-            letter.word = null
-            letter.targetPos = null
-            letter.targetIndex = -1
-            letter.vel.mult(0.3)
+        for (const lt of this.letters) {
+            lt.recruited = false
+            lt.bondLeft = null
+            lt.bondRight = null
+            lt.wordGroup = null
+            lt.wordIndex = -1
+            lt.vel.mult(0.4)
         }
         this.launched = true
     }
 
-    shouldDissolve() {
-        return this.pathProgress >= 0.2
+    shouldDissolve(millis) {
+        return (millis - this.startTime) >= WORD_LIFETIME
     }
 }
 
@@ -684,12 +640,14 @@ const sketch = (p) => {
         // Rotate global word spawn direction
         currentWordDirection += WORD_ROTATION_SPEED
 
-        // Update word formations
+        const currentTime = p.millis()
+
+        // Apply word bond forces and dissolve expired words
         for (let i = activeWords.length - 1; i >= 0; i--) {
             const word = activeWords[i]
-            word.update()
+            word.applyBondForces(currentTime)
 
-            if (word.shouldDissolve()) {
+            if (word.shouldDissolve(currentTime)) {
                 word.dissolve()
             }
 
@@ -709,17 +667,13 @@ const sketch = (p) => {
             framesSinceQuadtreeRebuild = 0
         }
 
-        // Apply forces to letters
+        // Apply boids forces to all letters; gravity only to non-recruited
         for (const letter of letters) {
-            letter.applyNeighborForces(quadtree)
+            letter.applyBoidsForces(quadtree)
 
-            // Only apply gravity if not disabled
-            if (!gravityDisabled) {
+            if (!letter.recruited && !gravityDisabled) {
                 letter.gravitate(centerX, centerY)
             }
-
-            // Use direct word reference instead of Map lookup
-            letter.swim(letter.word?.currentOrientation ?? null)
         }
 
         // Update and display letters
@@ -730,8 +684,6 @@ const sketch = (p) => {
         }
 
         // Handle burst emission with timing
-        const currentTime = p.millis()
-
         // Start new burst if cooldown expired and bursts available
         if (currentBurst.length === 0 && currentTime >= burstCooldownUntil && streamManager.hasSentenceReady()) {
             const sentence = streamManager.getNextSentence()
@@ -847,9 +799,13 @@ const sketch = (p) => {
             const d = p5.Vector.dist(letter.pos, p.createVector(p.mouseX, p.mouseY))
             if (d < letter.radius * 2) {
                 draggedLetter = letter
-                letter.vel.mult(0) // Stop movement while dragging
-                letter.recruited = false // Release from any word formation
-                letter.dragging = true // Mark as being dragged
+                letter.vel.mult(0)
+                letter.recruited = false
+                letter.bondLeft = null
+                letter.bondRight = null
+                letter.wordGroup = null
+                letter.wordIndex = -1
+                letter.dragging = true
                 prevMousePos = p.createVector(p.mouseX, p.mouseY)
                 return
             }
@@ -949,59 +905,61 @@ const sketch = (p) => {
     }
 
 
-    // Form a word by recruiting letters
+    // Recruit letters for a word and wire up neighbor bonds
     function formWord(word, direction = null) {
         word = word.toUpperCase()
-        const formation = new WordFormation(word, p, centerX, centerY)
+        const dir = direction !== null ? direction : currentWordDirection
+        const formation = new WordFormation(word, p, p.millis(), dir)
 
-        // Override direction if provided (for burst spacing)
-        if (direction !== null) {
-            formation.direction = direction
-            formation.currentOrientation = direction
-        }
+        // Give the whole flock an initial nudge in the word's direction so
+        // the recruited letters start drifting that way together
+        const kickX = Math.cos(dir) * MAX_LETTER_SPEED * 0.6
+        const kickY = Math.sin(dir) * MAX_LETTER_SPEED * 0.6
 
-        const formX = formation.pos.x
-        const formY = formation.pos.y
+        const recruited = []
 
         for (let i = 0; i < word.length; i++) {
             const char = word[i]
-
-            // Use character index for O(1) lookup instead of filtering all letters
             const charLetters = lettersByChar.get(char)
-            if (!charLetters) {
-                console.warn(`No available letter "${char}"`)
-                continue
-            }
+            if (!charLetters) continue
 
-            // Find closest unrequited letter using squared distance (no vector allocations)
-            let closestLetter = null
-            let closestDistSq = Infinity
+            // Find the closest free letter
+            let closest = null
+            let closestDSq = Infinity
 
-            for (const letter of charLetters) {
-                if (letter.recruited) continue
-                const dx = letter.pos.x - formX
-                const dy = letter.pos.y - formY
-                const distSq = dx * dx + dy * dy
-                if (distSq < closestDistSq) {
-                    closestDistSq = distSq
-                    closestLetter = letter
+            for (const lt of charLetters) {
+                if (lt.recruited) continue
+                const dx = lt.pos.x - centerX
+                const dy = lt.pos.y - centerY
+                const dSq = dx * dx + dy * dy
+                if (dSq < closestDSq) {
+                    closestDSq = dSq
+                    closest = lt
                 }
             }
 
-            if (closestLetter === null) {
-                console.warn(`No available letter "${char}"`)
-                continue
-            }
+            if (!closest) { console.warn(`No free letter "${char}"`); continue }
 
-            closestLetter.recruited = true
-            closestLetter.wordId = formation.id
-            closestLetter.word = formation  // Store reference for direct orientation lookup
-            closestLetter.targetIndex = i
-            formation.letters.push(closestLetter)
+            closest.recruited = true
+            closest.wordGroup = formation
+            closest.wordIndex = i
+            // Give an initial velocity kick toward word direction
+            closest.vel.x = kickX + (Math.random() - 0.5) * 0.5
+            closest.vel.y = kickY + (Math.random() - 0.5) * 0.5
+
+            formation.letters.push(closest)
+            recruited.push(closest)
         }
 
-        formation.updateTargetPositions()
+        // Wire up left/right bonds in word order (by wordIndex)
+        const sorted = [...formation.letters].sort((a, b) => a.wordIndex - b.wordIndex)
+        for (let i = 0; i < sorted.length; i++) {
+            sorted[i].bondLeft  = sorted[i - 1] ?? null
+            sorted[i].bondRight = sorted[i + 1] ?? null
+        }
+
         activeWords.push(formation)
+        console.log(`Formed "${word}" (${formation.letters.length} letters)`)
     }
 
     // Public API
