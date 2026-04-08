@@ -22,9 +22,7 @@ WebGPU is required. The model downloads and runs entirely in the browser — no 
 
 | Input | Action |
 |---|---|
-| Drag background | Move gravity attractor |
-| Drag a letter | Throw it |
-| Hold `Space` | Disable gravity |
+| Hold `Space` | Disable cohesion |
 | `S` | Save current frame as SVG |
 
 ## Configuration
