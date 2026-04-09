@@ -33,24 +33,30 @@ Prompts are loaded from [prompts.txt](prompts.txt) — one prompt per line (sepa
 
 ## Deploying to Personal-Webpage
 
-The project lives as a git submodule inside `Personal-Webpage/word-bag-soul-trap/`. To deploy changes:
+Built files are committed directly into `Personal-Webpage/word-bag-soul-trap/` (not a submodule). To deploy:
 
 ```bash
-# 1. Build and commit dist/ to this repo
-npm run build        # outputs to dist/
-git add dist/
-git commit -m "Rebuild"
-git push origin main
+# 1. Build
+npm run build
 
-# 2. In the Personal-Webpage submodule, pull the new build
-cd /path/to/Personal-Webpage/word-bag-soul-trap
-git pull origin main
+# 2. Copy built files into Personal-Webpage
+DEST=/path/to/Personal-Webpage/word-bag-soul-trap
+cp dist/assets/* $DEST/assets/
+cp dist/index.html $DEST/index.html
 
-# 3. Commit the updated submodule pointer
-cd ..
-git add word-bag-soul-trap
-git commit -m "Update word-bag submodule"
+# 3. Fix the asset path in the copied index.html —
+#    Vite writes an absolute path like /word-bag-soul-trap/dist/assets/index-HASH.js
+#    Change it to a relative path: ./assets/index-HASH.js
+sed -i '' 's|src="/word-bag-soul-trap/dist/assets/|src="./assets/|' $DEST/index.html
+
+# 4. Copy prompts if they changed
+cp prompts.txt $DEST/prompts.txt
+
+# 5. Commit and push Personal-Webpage
+cd $DEST/..
+git add word-bag-soul-trap/
+git commit -m "Rebuild word-bag"
 git push origin master
 ```
 
-The live site serves from `word-bag-soul-trap/dist/`. The root `index.html` is for dev only and is never touched by builds.
+The root `index.html` is for dev (`npm run dev`) only and is never modified by builds.
