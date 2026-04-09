@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig(({ command }) => ({
-    base: command === 'build' ? '/word-bag-soul-trap/' : '/',
+    base: command === 'build' ? './' : '/',
     build: {
-        outDir: 'dist',
-        emptyOutDir: true,
+        outDir: '.',
+        emptyOutDir: false,
     },
 }))
