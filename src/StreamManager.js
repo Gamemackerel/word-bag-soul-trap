@@ -1,6 +1,11 @@
 // StreamManager — loads prompts and drives LLM generation.
 // No p5 or Ocean dependency.
 //
+// The model is used as a pure text predictor, not a chatbot.
+// One continuous stream of text grows over time. Each prompt line
+// is injected into the stream as seed text, and the LLM continues
+// predicting what comes next. No system/assistant roles — just words.
+//
 // Usage:
 //   const manager = new StreamManager(config)
 //   await manager.loadPrompts('./prompts.txt')
@@ -11,7 +16,7 @@ export class StreamManager {
         this.cfg = cfg.llm
         this.prompts = []
         this.promptIndex = 0
-        this.context = ''       // rolling LLM context window
+        this.stream = ''        // the single growing text stream
         this.running = false
         this.onSentence = null  // callback(words[])
         this._engine = null
@@ -40,13 +45,17 @@ export class StreamManager {
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    // Each prompt line can be: "seed text" or "seed text | injected display text"
+    // The seed text (before |) is what goes into the LLM context.
+    // The display text (after |) is what gets shown in the visualisation immediately.
+    // If no |, the whole line is both.
     _nextPrompt() {
         const raw = this.prompts[this.promptIndex]
         this.promptIndex = (this.promptIndex + 1) % this.prompts.length
         const parts = raw.split('|')
         return parts.length > 1
-            ? { full: parts[0].trim() + ' ' + parts[1].trim(), display: parts[1].trim() }
-            : { full: raw, display: raw }
+            ? { seed: parts[0].trim(), display: parts[1].trim() }
+            : { seed: raw.trim(), display: raw.trim() }
     }
 
     _ingestText(text) {
@@ -73,26 +82,35 @@ export class StreamManager {
 
         try {
             const prompt = this._nextPrompt()
-            const contextInput = this.context.slice(-300)
-            const fullInput = contextInput ? `${contextInput} ${prompt.full}` : prompt.full
 
-            // Immediately ingest the display portion of the prompt
+            // Inject the seed into the stream and ingest display text for visualisation
+            this.stream += ' ' + prompt.seed
             this._ingestText(prompt.display)
-            this.context += ' ' + prompt.display
+
+            // Trim stream to context window — keep only recent text
+            const contextText = this.stream.slice(-this.cfg.maxContextLength)
+
+            console.log(`[LLM] context: "${contextText}"`)
 
             const stream = await this._engine.chat.completions.create({
-                messages: [{ role: 'user', content: fullInput }],
+                messages: [
+                    { role: 'system', content: 'You are a text completion engine. Output only a direct continuation of the text provided. No preamble, no commentary, no meta-text. Just the next words.' },
+                    { role: 'user',   content: contextText },
+                ],
                 stream: true,
                 max_tokens: this.cfg.maxTokens,
             })
 
             let buffer = ''
+            let fullResponse = ''
+
             for await (const chunk of stream) {
                 const content = chunk.choices[0]?.delta?.content || ''
                 if (!content) continue
 
                 buffer += content
-                this.context += content
+                fullResponse += content
+                this.stream += content
 
                 if (/\s/.test(buffer)) {
                     const parts = buffer.split(/(\s+)/)
@@ -108,9 +126,11 @@ export class StreamManager {
                 }
             }
 
-            // Trim context to avoid unbounded growth
-            if (this.context.length > this.cfg.maxContextLength) {
-                this.context = this.context.slice(-this.cfg.maxContextLength)
+            console.log(`[LLM] response: "${fullResponse.trim()}"`)
+
+            // Keep stream from growing unboundedly
+            if (this.stream.length > this.cfg.maxContextLength * 2) {
+                this.stream = this.stream.slice(-this.cfg.maxContextLength)
             }
 
         } catch (err) {
