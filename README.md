@@ -30,3 +30,27 @@ WebGPU is required. The model downloads and runs entirely in the browser — no 
 Physics, boid parameters, word lifetime, LLM settings, and letter distribution are all in [src/config.js](src/config.js).
 
 Prompts are loaded from [prompts.txt](prompts.txt) — one prompt per line (separated by `|`), cycled automatically.
+
+## Deploying to Personal-Webpage
+
+The project lives as a git submodule inside `Personal-Webpage/word-bag-soul-trap/`. To deploy changes:
+
+```bash
+# 1. Build and commit dist/ to this repo
+npm run build        # outputs to dist/
+git add dist/
+git commit -m "Rebuild"
+git push origin main
+
+# 2. In the Personal-Webpage submodule, pull the new build
+cd /path/to/Personal-Webpage/word-bag-soul-trap
+git pull origin main
+
+# 3. Commit the updated submodule pointer
+cd ..
+git add word-bag-soul-trap
+git commit -m "Update word-bag submodule"
+git push origin master
+```
+
+The live site serves from `word-bag-soul-trap/dist/`. The root `index.html` is for dev only and is never touched by builds.
