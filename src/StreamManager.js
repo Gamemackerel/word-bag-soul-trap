@@ -58,13 +58,39 @@ export class StreamManager {
             : { seed: raw.trim(), display: raw.trim() }
     }
 
+    static BLACKLIST = new Set([
+        // contractions (without apostrophe)
+        'dont', 'cant', 'isnt', 'arent', 'wasnt', 'werent', 'hasnt', 'havent',
+        'hadnt', 'wont', 'wouldnt', 'shouldnt', 'couldnt', 'mustnt', 'didnt',
+        'doesnt', 'mightnt', 'neednt', 'shant', 'aint', 'youre', 'theyre',
+        'were', 'were', 'hes', 'shes', 'thats', 'whos', 'whats', 'theres',
+        'youve', 'weve', 'theyve', 'ive', 'youd', 'hed', 'shed', 'theyd',
+        'wed', 'youll', 'hell', 'shell', 'theyll', 'well', 'itll',
+        // boring abstract filler verbs / words
+        'also', 'just', 'very', 'really', 'actually', 'basically', 'literally',
+        'simply', 'quite', 'rather', 'somewhat', 'however', 'therefore',
+        'although', 'because', 'while', 'often', 'always', 'never', 'every',
+        'maybe', 'perhaps', 'usually', 'already', 'still', 'again', 'even',
+        'much', 'many', 'some', 'more', 'most', 'each', 'both', 'such',
+        'then', 'than', 'when', 'what', 'that', 'this', 'those', 'these',
+        'with', 'from', 'have', 'been', 'will', 'would', 'could', 'should',
+        'must', 'might', 'make', 'made', 'take', 'taken', 'give', 'given',
+        'come', 'came', 'said', 'says', 'seem', 'seems', 'seemed', 'want',
+        'like', 'know', 'knew', 'think', 'thought', 'need', 'used', 'went',
+        'going', 'being', 'having', 'doing', 'getting', 'making', 'taking',
+        'there', 'their', 'they', 'them', 'were', 'your', 'about', 'into',
+        'over', 'after', 'only', 'back', 'other', 'than', 'well', 'also',
+        'through', 'during', 'before', 'under', 'between', 'without', 'within',
+    ])
+
     _ingestText(text) {
         const { minWordLength } = this.cfg
         const words = text.split(/\s+/).filter(w => w.trim())
 
         for (const word of words) {
-            const clean = word.replace(/[.,!?;:]/g, '')
+            const clean = word.replace(/[.,!?;:'"]/g, '').toLowerCase()
             if (clean.length <= minWordLength) continue
+            if (StreamManager.BLACKLIST.has(clean)) continue
 
             this._sentenceBuffer.push(word)
 

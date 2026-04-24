@@ -12,6 +12,7 @@ export class BurstScheduler {
         this.nextEmitTime = 0
         this.gravityDisabled = false
         this.cohesionDisabled = false
+        this._lastBurstKey = null // dedup: normalized key of last emitted burst
     }
 
     enqueueSentence(words) {
@@ -36,8 +37,21 @@ export class BurstScheduler {
             millis >= this.cooldownUntil &&
             this.sentenceQueue.length > 0)
         {
-            const sentence = this.sentenceQueue.shift()
-            this.pendingBurst = this._planBurst(sentence, currentDirection)
+            let sentence
+            let planned
+            // Skip bursts whose normalized key matches the last emitted burst
+            while (this.sentenceQueue.length > 0) {
+                sentence = this.sentenceQueue.shift()
+                planned = this._planBurst(sentence, currentDirection)
+                const key = planned.map(e => e.word.replace(/[.,!?;:'"]/g, '').toLowerCase()).join(' ')
+                if (key !== this._lastBurstKey) {
+                    this._lastBurstKey = key
+                    break
+                }
+                planned = null
+            }
+            if (!planned) return toEmit
+            this.pendingBurst = planned
 
             // Emit first word immediately
             const first = this.pendingBurst.shift()
