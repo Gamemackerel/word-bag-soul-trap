@@ -125,7 +125,7 @@ export class Ocean {
 
             // Burst scheduling
             const toEmit = scheduler.tick(now, wordDirection)
-            for (const { word, direction } of toEmit) formWord(word, direction)
+            for (const { word, direction, strong } of toEmit) formWord(word, direction, strong)
         }
 
         p.windowResized = () => p.resizeCanvas(p.windowWidth, p.windowHeight)
@@ -176,13 +176,11 @@ export class Ocean {
 
         // ── formWord ──────────────────────────────────────────────────────────
 
-        function formWord(word, direction) {
+        function formWord(word, direction, strong = false) {
             word = word.toUpperCase()
             const dir = direction ?? wordDirection
             const formation = new WordFormation(word, p, p.millis(), dir, cfg)
-
-            const kickX = Math.cos(dir) * cfg.physics.maxLetterSpeed * 0.6
-            const kickY = Math.sin(dir) * cfg.physics.maxLetterSpeed * 0.6
+            if (strong) formation.repulsionStrength = cfg.word.strongRepulsionStrength
 
             let anchorX = centerX
             let anchorY = centerY
@@ -208,8 +206,6 @@ export class Ocean {
                 closest.recruited = true
                 closest.wordGroup = formation
                 closest.wordIndex = i
-                closest.vel.x = kickX + (Math.random() - 0.5) * 0.5
-                closest.vel.y = kickY + (Math.random() - 0.5) * 0.5
 
                 formation.letters.push(closest)
                 anchorX = closest.pos.x

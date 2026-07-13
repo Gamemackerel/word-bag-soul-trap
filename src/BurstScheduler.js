@@ -13,6 +13,7 @@ export class BurstScheduler {
         this.gravityDisabled = false
         this.cohesionDisabled = false
         this._lastBurstKey = null // dedup: normalized key of last emitted burst
+        this.burstCount = 0       // total bursts emitted, for strongEvery cadence
     }
 
     enqueueSentence(words) {
@@ -51,6 +52,13 @@ export class BurstScheduler {
                 planned = null
             }
             if (!planned) return toEmit
+
+            // Every Nth burst goes out with strong repulsion
+            this.burstCount++
+            if (this.burstCount % this.cfg.burst.strongEvery === 0) {
+                for (const entry of planned) entry.strong = true
+            }
+
             this.pendingBurst = planned
 
             // Emit first word immediately

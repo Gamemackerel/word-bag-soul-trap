@@ -15,7 +15,20 @@ export const DEFAULT_CONFIG = {
         alignmentRadius: 80,
         alignmentStrength: 0.05,
         cohesionRadius: 120,
-        cohesionStrength: 0.006,
+        cohesionStrength: 0.003,
+        // 0..1 — how much cohesion prefers neighbors that form likely
+        // English letter pairs (0 = plain boids, 1 = fully bigram-driven)
+        bigramBias: 1.0,
+        // Contrast exponent on the affinity: >1 sharpens the preference
+        // (common pairs dominate, unlikely pairs barely pull at all)
+        bigramSharpness: 3,
+        // Torque steering a free letter's rotation toward the average
+        // orientation of its affinity-weighted neighbors (0 = free spin)
+        orientationStrength: 0.0001,
+        // Tangential push around the local cluster centroid. Each letter is
+        // born clockwise or counterclockwise, so the soup carries both
+        // spiral and antispiral currents (0 = plain radial cohesion)
+        swirlStrength: 0.001,
     },
 
     // Word bonding physics
@@ -23,10 +36,15 @@ export const DEFAULT_CONFIG = {
         letterSpacing: 16,
         alignStrength: 0.12,
         bondStrength: 0.08,
+        // Time (ms) a word spends assembling inside the soup before it is
+        // kicked outward; lifetime below is the flight time after launch
+        formationTime: 3000,
         repulsionRadius: 160,
-        repulsionStrength: 14.0,
+        repulsionStrength: 0,
+        // Repulsion for words of every Nth burst (see burst.strongEvery)
+        strongRepulsionStrength: 14,
         lifetime: 14000,
-        rotationSpeed: 0.001,
+        rotationSpeed: 0.01,
     },
 
     // Boundary repulsion
@@ -37,7 +55,7 @@ export const DEFAULT_CONFIG = {
 
     // General physics
     physics: {
-        gravityStrength: 0,
+        gravityStrength: 0.1,
         spinNoise: 0.003,
         maxLetterSpeed: 3,
         speedDeceleration: 0.3,
@@ -45,8 +63,10 @@ export const DEFAULT_CONFIG = {
 
     // Burst emission
     burst: {
-        wordDelay: 2000,
-        cooldown: 30000,
+        wordDelay: 1000,
+        cooldown: 2000,
+        // Every Nth burst launches with word.strongRepulsionStrength
+        strongEvery: 7,
     },
 
     // Spatial partitioning

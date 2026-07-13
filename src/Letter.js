@@ -1,8 +1,10 @@
 import { Rectangle } from './quadtree.js'
+import { BIGRAM_AFFINITY } from './bigrams.js'
 
 export class Letter {
     constructor(char, x, y, p, cfg) {
         this.char = char
+        this.charIndex = char.charCodeAt(0) - 65
         this.p = p
         this.cfg = cfg
 
@@ -22,6 +24,7 @@ export class Letter {
         // Rotational physics
         this.angle = p.random(p.TWO_PI)
         this.angularVel = p.random(-0.1, 0.1)
+        this.swirlDir = Math.random() < 0.5 ? 1 : -1  // spiral vs antispiral
         this.angularAcc = 0
         this.momentOfInertia = this.radius * this.radius  // mass = 1
 
@@ -50,11 +53,16 @@ export class Letter {
         let sepX = 0, sepY = 0, sepCount = 0
         let avgVelX = 0, avgVelY = 0, alignCount = 0
         let avgPosX = 0, avgPosY = 0, cohWeight = 0
+        let orientX = 0, orientY = 0, orientWeight = 0
 
         const sepRSq   = boids.separationRadius * boids.separationRadius
         const alignRSq = boids.alignmentRadius  * boids.alignmentRadius
         const cohRSq   = boids.cohesionRadius   * boids.cohesionRadius
         const repRSq   = word.repulsionRadius   * word.repulsionRadius
+
+        const bigramBias = boids.bigramBias
+        const bigramSharpness = boids.bigramSharpness
+        const affinityRow = this.charIndex * 26
 
         for (const other of neighbors) {
             if (other === this) continue
@@ -64,14 +72,28 @@ export class Letter {
             const dSq = dx * dx + dy * dy
             if (dSq === 0) continue
 
-            // Cross-word repulsion: fades in/out with bondRamp
+            // Cross-word repulsion: only once a word is airborne — forming
+            // words sit quietly in the soup until they launch. Strength is
+            // per-word (strong bursts push harder), faded by bond ramp.
             if (this.wordGroup !== other.wordGroup && dSq < repRSq) {
-                const ramp = Math.max(this.bondRamp, other.bondRamp)
-                if (ramp > 0) {
+                const push = Math.max(
+                    this.wordGroup?.airborne  ? this.bondRamp  * this.wordGroup.repulsionStrength  : 0,
+                    other.wordGroup?.airborne ? other.bondRamp * other.wordGroup.repulsionStrength : 0
+                )
+                if (push > 0) {
                     const d = Math.sqrt(dSq)
-                    this.acc.x += (dx / d) * (ramp * word.repulsionStrength / d)
-                    this.acc.y += (dy / d) * (ramp * word.repulsionStrength / d)
+                    this.acc.x += (dx / d) * (push / d)
+                    this.acc.y += (dy / d) * (push / d)
                 }
+            }
+
+            const affinity = Math.pow(BIGRAM_AFFINITY[affinityRow + other.charIndex], bigramSharpness)
+
+            // Rotational alignment: face the way linguistically-likely neighbors face
+            if (dSq < alignRSq) {
+                orientX += Math.cos(other.angle) * affinity
+                orientY += Math.sin(other.angle) * affinity
+                orientWeight += affinity
             }
 
             if (dSq < sepRSq) {
@@ -91,8 +113,9 @@ export class Letter {
                 avgVelY += other.vel.y
                 alignCount++
             } else if (dSq < cohRSq) {
-                // Weight neighbor by how unbound it is — bonded letters don't pull
-                const w = 1 - other.bondRamp
+                // Weight neighbor by how unbound it is — bonded letters don't
+                // pull — and by how likely the letter pair is in English
+                const w = (1 - other.bondRamp) * (1 - bigramBias + bigramBias * affinity)
                 avgPosX += other.pos.x * w
                 avgPosY += other.pos.y * w
                 cohWeight += w
@@ -108,9 +131,27 @@ export class Letter {
             this.acc.y += ((avgVelY / alignCount) - this.vel.y) * boids.alignmentStrength
         }
         if (cohWeight > 0 && !cohesionDisabled) {
-            const cohesion = boids.cohesionStrength * (1 - this.bondRamp)
-            this.acc.x += ((avgPosX / cohWeight) - this.pos.x) * cohesion
-            this.acc.y += ((avgPosY / cohWeight) - this.pos.y) * cohesion
+            const damp = 1 - this.bondRamp
+            const cx = (avgPosX / cohWeight) - this.pos.x
+            const cy = (avgPosY / cohWeight) - this.pos.y
+            this.acc.x += cx * boids.cohesionStrength * damp
+            this.acc.y += cy * boids.cohesionStrength * damp
+
+            // Tangential swirl: orbit the local centroid while falling toward
+            // it, clockwise or counterclockwise per this letter's handedness
+            const swirl = boids.swirlStrength * damp * this.swirlDir
+            this.acc.x += -cy * swirl
+            this.acc.y +=  cx * swirl
+        }
+
+        // Recruited letters are torqued by their WordFormation instead
+        if (orientWeight > 0 && !this.recruited) {
+            const target = Math.atan2(orientY, orientX)
+            let diff = target - this.angle
+            while (diff > Math.PI)  diff -= Math.PI * 2
+            while (diff < -Math.PI) diff += Math.PI * 2
+            this.angularAcc += diff * boids.orientationStrength
+            this.angularVel *= 0.92
         }
     }
 
