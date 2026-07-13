@@ -24,6 +24,11 @@ async function init() {
         return
     }
 
+    if (!navigator.gpu) {
+        setStatus('The word engine needs WebGPU — open this page in Chrome or Edge to see words form.')
+        return
+    }
+
     try {
         setStatus('Loading AI model...')
 
@@ -41,7 +46,11 @@ async function init() {
 
     } catch (err) {
         console.error(err)
-        setStatus('Error loading model. WebGPU required.')
+        // Safari/Firefox expose WebGPU but with limits too low for the model
+        const insufficientGPU = /exceeds limit|maxStorageBuffers|requestDevice|adapter/i.test(String(err))
+        setStatus(insufficientGPU
+            ? "This browser's WebGPU can't run the word engine — open this page in Chrome or Edge to see words form."
+            : 'The word engine failed to load — check your connection and reload.')
     }
 }
 
